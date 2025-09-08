@@ -2928,19 +2928,19 @@ def _remove_strict_from_schema(schema):
 def _remove_json_schema_refs(schema, max_depth=10):
     """
     Remove JSON schema reference fields like '$id' and '$schema' that can cause issues with some providers.
-    
+
     These fields are used for schema validation but can cause problems when the schema references
     are not accessible to the provider's validation system.
-    
+
     Args:
         schema: The schema object to clean (dict, list, or other)
         max_depth: Maximum recursion depth to prevent infinite loops (default: 10)
-    
+
     Relevant Issues: Mistral API grammar validation fails when schema contains $id and $schema references
     """
     if max_depth <= 0:
         return schema
-        
+
     if isinstance(schema, dict):
         # Remove JSON schema reference fields
         schema.pop("$id", None)
@@ -6664,7 +6664,8 @@ def validate_and_fix_openai_messages(messages: List):
         new_messages.append(cleaned_message)
     return validate_chat_completion_user_messages(messages=new_messages)
 
-def validate_and_fix_openai_tools(tools: Optional[List]) -> Optional[List[dict]]: 
+
+def validate_and_fix_openai_tools(tools: Optional[List]) -> Optional[List[dict]]:
     """
     Ensure tools is List[dict] and not List[BaseModel]
     """
@@ -6677,6 +6678,7 @@ def validate_and_fix_openai_tools(tools: Optional[List]) -> Optional[List[dict]]
         elif isinstance(tool, dict):
             new_tools.append(tool)
     return new_tools
+
 
 def cleanup_none_field_in_message(message: AllMessageValues):
     """
@@ -7388,6 +7390,9 @@ def get_end_user_id_for_cost_tracking(
     service_type: "litellm_logging" or "prometheus" - used to allow prometheus only disable cost tracking.
     """
     _metadata = cast(dict, litellm_params.get("metadata", {}) or {})
+
+    if "litellm_metadata" in litellm_params:
+        _metadata.update(litellm_params["litellm_metadata"])
 
     end_user_id = cast(
         Optional[str],
