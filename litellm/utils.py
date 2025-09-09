@@ -4661,6 +4661,7 @@ def _get_model_info_helper(  # noqa: PLR0915
     """
     Helper for 'get_model_info'. Separated out to avoid infinite loop caused by returning 'supported_openai_param's
     """
+    verbose_logger.debug(f"{model=}, {custom_llm_provider=}")
     try:
         azure_llms = {**litellm.azure_llms, **litellm.azure_embedding_models}
         if model in azure_llms:
@@ -4690,6 +4691,7 @@ def _get_model_info_helper(  # noqa: PLR0915
         ]
         split_model = potential_model_names["split_model"]
         custom_llm_provider = potential_model_names["custom_llm_provider"]
+        verbose_logger.debug(f"{model=}, {custom_llm_provider=}")
         #########################
         if custom_llm_provider == "huggingface":
             max_tokens = _get_max_position_embeddings(model_name=model)
@@ -4729,6 +4731,7 @@ def _get_model_info_helper(  # noqa: PLR0915
             key: Optional[str] = None
 
             if combined_model_name in litellm.model_cost:
+                verbose_logger.debug(f"{combined_model_name=}, {litellm.model_cost=}")
                 key = combined_model_name
                 _model_info = _get_model_info_from_model_cost(key=cast(str, key))
                 if not _check_provider_match(
@@ -4795,7 +4798,7 @@ def _get_model_info_helper(  # noqa: PLR0915
                     )
                 )
                 _output_cost_per_token = 0
-
+            verbose_logger.debug(f"{_model_info=}")
             return ModelInfoBase(
                 key=key,
                 max_tokens=_model_info.get("max_tokens", None),

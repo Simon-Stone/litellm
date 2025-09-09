@@ -12,6 +12,7 @@ import os
 
 import httpx
 
+import logging
 
 def get_model_cost_map(url: str) -> dict:
     if (
@@ -28,13 +29,17 @@ def get_model_cost_map(url: str) -> dict:
             return content
 
     try:
+        verbose_logger = logging.getLogger("LiteLLM")
         response = httpx.get(
             url, timeout=5
         )  # set a 5 second timeout for the get request
+        verbose_logger.debug(f"{response.text=}")
         response.raise_for_status()  # Raise an exception if the request is unsuccessful
         content = response.json()
         return content
     except Exception:
+        verbose_logger = logging.getLogger("LiteLLM")
+        verbose_logger.debug("Exception handled!")
         import importlib.resources
         import json
 
