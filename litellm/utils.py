@@ -7391,7 +7391,10 @@ def get_end_user_id_for_cost_tracking(
     """
     _metadata = cast(dict, litellm_params.get("metadata", {}) or {})
 
-    if "litellm_metadata" in litellm_params:
+    if (
+        "litellm_metadata" in litellm_params
+        and litellm_params["litellm_metadata"] is not None
+    ):
         _metadata.update(litellm_params["litellm_metadata"])
 
     end_user_id = cast(
