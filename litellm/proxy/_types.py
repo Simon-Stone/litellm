@@ -1,6 +1,5 @@
 import enum
 import json
-import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Union
 
@@ -15,15 +14,10 @@ from pydantic import (
 )
 from typing_extensions import Required, TypedDict
 
+from litellm._uuid import uuid
 from litellm.types.integrations.slack_alerting import AlertType
 from litellm.types.llms.openai import AllMessageValues, OpenAIFileObject
-from litellm.types.mcp import (
-    MCPAuthType,
-    MCPSpecVersion,
-    MCPSpecVersionType,
-    MCPTransport,
-    MCPTransportType,
-)
+from litellm.types.mcp import MCPAuthType, MCPTransport, MCPTransportType
 from litellm.types.mcp_server.mcp_server_manager import MCPInfo
 from litellm.types.router import RouterErrors, UpdateRouterConfig
 from litellm.types.secret_managers.main import KeyManagementSystem
@@ -303,6 +297,8 @@ class LiteLLMRoutes(enum.Enum):
         "/v1/responses/{response_id}",
         "/responses/{response_id}/input_items",
         "/v1/responses/{response_id}/input_items",
+        "/responses/{response_id}/cancel",
+        "/v1/responses/{response_id}/cancel",
         # vector stores
         "/vector_stores",
         "/v1/vector_stores",
@@ -325,6 +321,12 @@ class LiteLLMRoutes(enum.Enum):
         "/vllm",
         "/mistral",
     ]
+
+    #########################################################
+    # e.g /vllm/*, anthropic/*, etc.
+    # allows using /anthropic/v1/messages, /vllm/v1/chat/completions, etc.
+    #########################################################
+    passthrough_routes_wildcard = [f"{route}/*" for route in mapped_pass_through_routes]
 
     anthropic_routes = [
         "/v1/messages",
@@ -356,6 +358,7 @@ class LiteLLMRoutes(enum.Enum):
         openai_routes
         + anthropic_routes
         + mapped_pass_through_routes
+        + passthrough_routes_wildcard
         + apply_guardrail_routes
         + mcp_routes
     )
@@ -381,19 +384,23 @@ class LiteLLMRoutes(enum.Enum):
     ]
 
     # NOTE: ROUTES ONLY FOR MASTER KEY - only the Master Key should be able to Reset Spend
-    master_key_only_routes = ["/global/spend/reset"]
+    master_key_only_routes = [
+        "/global/spend/reset",
+        "/memory-usage-in-mem-cache",
+        "/memory-usage-in-mem-cache-items",
+    ]
 
     key_management_routes = [
-        KeyManagementRoutes.KEY_GENERATE,
-        KeyManagementRoutes.KEY_UPDATE,
-        KeyManagementRoutes.KEY_DELETE,
-        KeyManagementRoutes.KEY_INFO,
-        KeyManagementRoutes.KEY_REGENERATE,
-        KeyManagementRoutes.KEY_GENERATE_SERVICE_ACCOUNT,
-        KeyManagementRoutes.KEY_REGENERATE_WITH_PATH_PARAM,
-        KeyManagementRoutes.KEY_LIST,
-        KeyManagementRoutes.KEY_BLOCK,
-        KeyManagementRoutes.KEY_UNBLOCK,
+        KeyManagementRoutes.KEY_GENERATE.value,
+        KeyManagementRoutes.KEY_UPDATE.value,
+        KeyManagementRoutes.KEY_DELETE.value,
+        KeyManagementRoutes.KEY_INFO.value,
+        KeyManagementRoutes.KEY_REGENERATE.value,
+        KeyManagementRoutes.KEY_GENERATE_SERVICE_ACCOUNT.value,
+        KeyManagementRoutes.KEY_REGENERATE_WITH_PATH_PARAM.value,
+        KeyManagementRoutes.KEY_LIST.value,
+        KeyManagementRoutes.KEY_BLOCK.value,
+        KeyManagementRoutes.KEY_UNBLOCK.value,
     ]
 
     management_routes = [
@@ -402,6 +409,7 @@ class LiteLLMRoutes(enum.Enum):
         "/user/update",
         "/user/delete",
         "/user/info",
+        "/user/list",
         # team
         "/team/new",
         "/team/update",
@@ -530,7 +538,7 @@ class LiteLLMRoutes(enum.Enum):
     # Routes accessible by Admin Viewer (read-only admin access)
     admin_viewer_routes = [
         "/user/list",
-        "/user/available_users", 
+        "/user/available_users",
         "/user/available_roles",
         "/user/daily/activity",
         "/team/daily/activity",
@@ -540,7 +548,10 @@ class LiteLLMRoutes(enum.Enum):
 
     # All routes accesible by an Org Admin
     org_admin_allowed_routes = (
-        org_admin_only_routes + management_routes + self_managed_routes + admin_viewer_routes
+        org_admin_only_routes
+        + management_routes
+        + self_managed_routes
+        + admin_viewer_routes
     )
 
 
@@ -585,13 +596,14 @@ class LiteLLMPromptInjectionParams(LiteLLMPydanticObjectBase):
 ######### Request Class Definition ######
 class ProxyChatCompletionRequest(LiteLLMPydanticObjectBase):
     """
-    Pydantic model for chat completion requests that includes both OpenAI standard fields 
+    Pydantic model for chat completion requests that includes both OpenAI standard fields
     and LiteLLM-specific parameters. This replaces the previous TypedDict version.
     """
+
     # Required fields (from ChatCompletionRequest)
     model: str
     messages: List[AllMessageValues]
-    
+
     # Standard OpenAI completion parameters (all optional)
     frequency_penalty: Optional[float] = None
     logit_bias: Optional[Dict[str, float]] = None
@@ -614,10 +626,10 @@ class ProxyChatCompletionRequest(LiteLLMPydanticObjectBase):
     functions: Optional[List[Dict[str, Any]]] = None
     user: Optional[str] = None
     stream: Optional[bool] = None
-    
+
     # LiteLLM-specific metadata param (from original ChatCompletionRequest)
     metadata: Optional[Dict[str, Any]] = None
-    
+
     # Optional LiteLLM params
     guardrails: Optional[List[str]] = None
     caching: Optional[bool] = None
@@ -762,6 +774,13 @@ class GenerateKeyRequest(KeyRequestBase):
         default=LiteLLMKeyType.DEFAULT,
         description="Type of key that determines default allowed routes.",
     )
+    auto_rotate: Optional[bool] = Field(
+        default=False, description="Whether this key should be automatically rotated"
+    )
+    rotation_interval: Optional[str] = Field(
+        default=None,
+        description="How often to rotate this key (e.g., '30d', '90d'). Required if auto_rotate=True",
+    )
 
 
 class GenerateKeyResponse(KeyRequestBase):
@@ -809,6 +828,8 @@ class UpdateKeyRequest(KeyRequestBase):
     metadata: Optional[dict] = None
     temp_budget_increase: Optional[float] = None
     temp_budget_expiry: Optional[datetime] = None
+    auto_rotate: Optional[bool] = None
+    rotation_interval: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_temp_budget(self) -> "UpdateKeyRequest":
@@ -891,7 +912,6 @@ class NewMCPServerRequest(LiteLLMPydanticObjectBase):
     alias: Optional[str] = None
     description: Optional[str] = None
     transport: MCPTransportType = MCPTransport.sse
-    spec_version: MCPSpecVersionType = MCPSpecVersion.jun_2025
     auth_type: Optional[MCPAuthType] = None
     url: Optional[str] = None
     mcp_info: Optional[MCPInfo] = None
@@ -923,7 +943,6 @@ class UpdateMCPServerRequest(LiteLLMPydanticObjectBase):
     alias: Optional[str] = None
     description: Optional[str] = None
     transport: MCPTransportType = MCPTransport.sse
-    spec_version: MCPSpecVersionType = MCPSpecVersion.jun_2025
     auth_type: Optional[MCPAuthType] = None
     url: Optional[str] = None
     mcp_info: Optional[MCPInfo] = None
@@ -958,7 +977,6 @@ class LiteLLM_MCPServerTable(LiteLLMPydanticObjectBase):
     description: Optional[str] = None
     url: Optional[str] = None
     transport: MCPTransportType
-    spec_version: MCPSpecVersionType
     auth_type: Optional[MCPAuthType] = None
     created_at: Optional[datetime] = None
     created_by: Optional[str] = None
@@ -1594,6 +1612,22 @@ class ConfigList(LiteLLMPydanticObjectBase):
     )
 
 
+class UserHeaderMapping(LiteLLMPydanticObjectBase):
+    """
+    Map an incoming HTTP header to a LiteLLM user role.
+    """
+
+    header_name: str
+    litellm_user_role: Literal[
+        LitellmUserRoles.INTERNAL_USER,
+        LitellmUserRoles.CUSTOMER,
+    ]
+
+    model_config = {
+        "extra": "forbid",
+    }
+
+
 class ConfigGeneralSettings(LiteLLMPydanticObjectBase):
     """
     Documents all the fields supported by `general_settings` in config.yaml
@@ -1698,6 +1732,11 @@ class ConfigGeneralSettings(LiteLLMPydanticObjectBase):
         default=None,
         description="Set-up pass-through endpoints for provider-specific endpoints. Docs - https://docs.litellm.ai/docs/proxy/pass_through",
     )
+    user_header_name: Optional[str] = Field(
+        None,
+        description="[DEPRECATED] Use 'user_header_mappings' instead. When set, the header value is treated as the end user id unless overridden by user_header_mappings.",
+    )
+    user_header_mappings: Optional[List[UserHeaderMapping]] = None
 
 
 class ConfigYAML(LiteLLMPydanticObjectBase):
@@ -1759,6 +1798,11 @@ class LiteLLM_VerificationToken(LiteLLMPydanticObjectBase):
     updated_by: Optional[str] = None
     object_permission_id: Optional[str] = None
     object_permission: Optional[LiteLLM_ObjectPermissionTable] = None
+    rotation_count: Optional[int] = 0  # Number of times key has been rotated
+    auto_rotate: Optional[bool] = False  # Whether this key should be auto-rotated
+    rotation_interval: Optional[str] = None  # How often to rotate (e.g., "30d", "90d")
+    last_rotation_at: Optional[datetime] = None  # When this key was last rotated
+    key_rotation_at: Optional[datetime] = None  # When this key should next be rotated
 
     model_config = ConfigDict(protected_namespaces=())
 
@@ -1873,7 +1917,41 @@ class UserAPIKeyAuth(
             key_alias=LITTELM_INTERNAL_HEALTH_SERVICE_ACCOUNT_NAME,
             team_alias=LITTELM_INTERNAL_HEALTH_SERVICE_ACCOUNT_NAME,
         )
-    
+
+    @classmethod
+    def get_litellm_cli_user_api_key_auth(cls) -> "UserAPIKeyAuth":
+        """
+        Returns a `UserAPIKeyAuth` object for the litellm internal health check service account.
+
+        This is used to track number of requests/spend for health check calls.
+        """
+        from litellm.constants import LITTELM_CLI_SERVICE_ACCOUNT_NAME
+
+        return cls(
+            api_key=LITTELM_CLI_SERVICE_ACCOUNT_NAME,
+            team_id=LITTELM_CLI_SERVICE_ACCOUNT_NAME,
+            key_alias=LITTELM_CLI_SERVICE_ACCOUNT_NAME,
+            team_alias=LITTELM_CLI_SERVICE_ACCOUNT_NAME,
+        )
+
+    @classmethod
+    def get_litellm_internal_jobs_user_api_key_auth(cls) -> "UserAPIKeyAuth":
+        """
+        Returns a `UserAPIKeyAuth` object for internal LiteLLM jobs like key rotation.
+
+        This is used to track actions performed by automated system jobs.
+        """
+        from litellm.constants import LITELLM_INTERNAL_JOBS_SERVICE_ACCOUNT_NAME
+
+        return cls(
+            api_key=LITELLM_INTERNAL_JOBS_SERVICE_ACCOUNT_NAME,
+            team_id="system",
+            key_alias=LITELLM_INTERNAL_JOBS_SERVICE_ACCOUNT_NAME,
+            team_alias="system",
+            user_id="system",
+        )
+
+
 class UserInfoResponse(LiteLLMPydanticObjectBase):
     user_id: Optional[str]
     user_info: Optional[Union[dict, BaseModel]]
@@ -1906,7 +1984,7 @@ class LiteLLM_OrganizationMembershipTable(LiteLLMPydanticObjectBase):
     model_config = ConfigDict(protected_namespaces=())
 
 
-class LiteLLM_OrganizationTableUpdate(LiteLLMPydanticObjectBase):
+class LiteLLM_OrganizationTableUpdate(LiteLLM_BudgetTable):
     """Represents user-controllable params for a LiteLLM_OrganizationTable record"""
 
     organization_id: Optional[str] = None
@@ -2120,7 +2198,6 @@ class TokenCountRequest(LiteLLMPydanticObjectBase):
     Anthropic token counting endpoint uses /messages
     """
 
-    
     contents: Optional[List[dict]] = None
     """
     Google /countTokens endpoint expects contents to be a list of dicts with the following structure:
@@ -2265,7 +2342,7 @@ class AllCallbacks(LiteLLMPydanticObjectBase):
 
     braintrust: CallbackOnUI = CallbackOnUI(
         litellm_callback_name="braintrust",
-        litellm_callback_params=["BRAINTRUST_API_KEY","BRAINTRUST_API_BASE"],
+        litellm_callback_params=["BRAINTRUST_API_KEY", "BRAINTRUST_API_BASE"],
         ui_callback_name="Braintrust",
     )
 
@@ -2319,7 +2396,9 @@ class SpendLogsMetadata(TypedDict):
     error_information: Optional[StandardLoggingPayloadErrorInformation]
     usage_object: Optional[dict]
     model_map_information: Optional[StandardLoggingModelInformation]
-    cold_storage_object_key: Optional[str]  # S3/GCS object key for cold storage retrieval
+    cold_storage_object_key: Optional[
+        str
+    ]  # S3/GCS object key for cold storage retrieval
 
 
 class SpendLogsPayload(TypedDict):
@@ -2646,7 +2725,7 @@ class LiteLLM_TeamMembership(LiteLLMPydanticObjectBase):
         if self.litellm_budget_table is not None:
             return self.litellm_budget_table.rpm_limit
         return None
-    
+
     def safe_get_team_member_tpm_limit(self) -> Optional[int]:
         if self.litellm_budget_table is not None:
             return self.litellm_budget_table.tpm_limit
@@ -2763,14 +2842,11 @@ class TeamMemberUpdateRequest(TeamMemberDeleteRequest):
     max_budget_in_team: Optional[float] = None
     role: Optional[Literal["admin", "user"]] = None
     tpm_limit: Optional[int] = Field(
-        default=None,
-        description="Tokens per minute limit for this team member"
+        default=None, description="Tokens per minute limit for this team member"
     )
     rpm_limit: Optional[int] = Field(
-        default=None,
-        description="Requests per minute limit for this team member"
+        default=None, description="Requests per minute limit for this team member"
     )
-    
 
 
 class TeamMemberUpdateResponse(MemberUpdateResponse):
@@ -2894,8 +2970,17 @@ class LitellmDataForBackendLLMCall(TypedDict, total=False):
     headers: dict
     organization: str
     timeout: Optional[float]
+    stream_timeout: Optional[float]
     user: Optional[str]
     num_retries: Optional[int]
+
+
+class LitellmMetadataFromRequestHeaders(TypedDict, total=False):
+    """
+    Headers a user can pass that will get added to litellm metadata for the request
+    """
+
+    spend_logs_metadata: Optional[dict]
 
 
 class JWTKeyItem(TypedDict, total=False):

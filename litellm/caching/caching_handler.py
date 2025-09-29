@@ -17,7 +17,6 @@ In each method it will call the appropriate method from caching.py
 import asyncio
 import datetime
 import inspect
-import threading
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -301,10 +300,12 @@ class LLMCachingHandler:
                         is_async=False,
                     )
 
-                    threading.Thread(
-                        target=logging_obj.success_handler,
-                        args=(cached_result, start_time, end_time, cache_hit),
-                    ).start()
+                    logging_obj.handle_sync_success_callbacks_for_async_calls(
+                        result=cached_result,
+                        start_time=start_time,
+                        end_time=end_time,
+                        cache_hit=cache_hit
+                    )
                     cache_key = litellm.cache._get_preset_cache_key_from_kwargs(
                         **kwargs
                     )
@@ -530,15 +531,17 @@ class LLMCachingHandler:
             end_time (datetime): The end time of the operation.
             cache_hit (bool): Whether it was a cache hit.
         """
-        asyncio.create_task(
-            logging_obj.async_success_handler(
-                cached_result, start_time, end_time, cache_hit
+        from litellm.litellm_core_utils.logging_worker import GLOBAL_LOGGING_WORKER
+
+        GLOBAL_LOGGING_WORKER.ensure_initialized_and_enqueue(
+            async_coroutine=logging_obj.async_success_handler(
+                result=cached_result, start_time=start_time, end_time=end_time, cache_hit=cache_hit
             )
         )
-        threading.Thread(
-            target=logging_obj.success_handler,
-            args=(cached_result, start_time, end_time, cache_hit),
-        ).start()
+
+        logging_obj.handle_sync_success_callbacks_for_async_calls(
+            result=cached_result, start_time=start_time, end_time=end_time, cache_hit=cache_hit
+        )
 
     async def _retrieve_from_cache(
         self, call_type: str, kwargs: Dict[str, Any], args: Tuple[Any, ...]
@@ -599,7 +602,7 @@ class LLMCachingHandler:
                 cached_result = await litellm.cache.async_get_cache(
                     dynamic_cache_object=self.dual_cache, **new_kwargs
                 )
-            else:  # for s3 caching. [NOT RECOMMENDED IN PROD - this will slow down responses since boto3 is sync]
+            else:  # fallback for caches that don't support async
                 cached_result = litellm.cache.get_cache(
                     dynamic_cache_object=self.dual_cache, **new_kwargs
                 )
@@ -806,12 +809,6 @@ class LLMCachingHandler:
                             result, dynamic_cache_object=self.dual_cache, **new_kwargs
                         )
                     )
-                elif isinstance(litellm.cache.cache, S3Cache):
-                    threading.Thread(
-                        target=litellm.cache.add_cache,
-                        args=(result,),
-                        kwargs=new_kwargs,
-                    ).start()
                 else:
                     asyncio.create_task(
                         litellm.cache.async_add_cache(
