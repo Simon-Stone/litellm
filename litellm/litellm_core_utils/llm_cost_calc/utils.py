@@ -190,7 +190,6 @@ def _get_cost_per_unit(model_info: ModelInfo, cost_key: str, default_value: Opti
                 f"litellm.litellm_core_utils.llm_cost_calc.utils.py::calculate_cost_per_component(): Exception occured - {cost_per_unit}\nDefaulting to 0.0"
             )
     return default_value
-    
 
 
 def generic_cost_per_token(
@@ -383,7 +382,7 @@ class CostCalculatorUtils:
         ]:
             return True
         return False
-    
+
     @staticmethod
     def route_image_generation_cost_calculator(
         model: str,
@@ -451,6 +450,15 @@ class CostCalculatorUtils:
             )
         elif custom_llm_provider == litellm.LlmProviders.AZURE_AI.value:
             return azure_ai_image_cost_calculator(
+                model=model,
+                image_response=completion_response,
+            )
+        elif custom_llm_provider == "openai":
+            from litellm.llms.openai.image_generation.cost_calculator import (
+                cost_calculator as openai_image_cost_calculator,
+            )
+
+            return openai_image_cost_calculator(
                 model=model,
                 image_response=completion_response,
             )

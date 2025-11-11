@@ -121,6 +121,9 @@ class ModelInfoBase(ProviderSpecificModelInfo, total=False):
     max_input_tokens: Required[Optional[int]]
     max_output_tokens: Required[Optional[int]]
     input_cost_per_token: Required[float]
+    input_cost_per_image_token: Optional[
+        float
+    ]  # only for token-based image generation models
     cache_creation_input_token_cost: Optional[float]
     cache_read_input_token_cost: Optional[float]
     input_cost_per_character: Optional[float]  # only for vertex ai models
@@ -1663,7 +1666,7 @@ class ImageResponse(OpenAIImageResponse, BaseLiteLLMOpenAIResponseObject):
             output_tokens=0,
             total_tokens=0,
         )
-        super().__init__(created=created, data=_data, usage=_usage)  # type: ignore
+        super().__init__(created=created, data=_data, usage=_usage, **kwargs)  # type: ignore
         self._hidden_params = hidden_params or {}
 
     def __contains__(self, key):

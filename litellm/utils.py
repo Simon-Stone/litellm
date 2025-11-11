@@ -4802,6 +4802,9 @@ def _get_model_info_helper(  # noqa: PLR0915
                 max_input_tokens=_model_info.get("max_input_tokens", None),
                 max_output_tokens=_model_info.get("max_output_tokens", None),
                 input_cost_per_token=_input_cost_per_token,
+                input_cost_per_image_token=_model_info.get(
+                    "input_cost_per_image_token", None
+                ),
                 cache_creation_input_token_cost=_model_info.get(
                     "cache_creation_input_token_cost", None
                 ),
