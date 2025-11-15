@@ -42,7 +42,7 @@ from openai.types.responses.response import (
     ToolChoice,
 )
 from openai.types.responses.response_create_params import (
-    Reasoning,
+    # Reasoning,  # Patched below
     ResponseIncludable,
     ResponseInputParam,
     ResponseTextConfigParam,
@@ -51,13 +51,22 @@ from openai.types.responses.response_create_params import (
 )
 from openai.types.responses.response_function_tool_call import ResponseFunctionToolCall
 from pydantic import BaseModel, ConfigDict, Discriminator, Field, PrivateAttr
-from typing_extensions import Annotated, Dict, Required, TypedDict, override
+from typing_extensions import Annotated, Dict, Required, TypedDict, override, TypeAlias
 
 from litellm.types.llms.base import BaseLiteLLMOpenAIResponseObject
 from litellm.types.responses.main import (
     GenericResponseOutputItem,
     OutputFunctionToolCall,
 )
+
+# Patching the OpenAI Reasoning class because of incompatibility with openai>2.0.0
+
+ReasoningEffort: TypeAlias = Optional[Literal["none", "minimal", "low", "medium", "high", "none"]]
+
+class Reasoning(TypedDict, total=False):
+    effort: ReasoningEffort
+    generate_summary: Optional[Literal["auto", "concise", "detailed"]]
+    summary: Optional[Literal["auto", "concise", "detailed"]]
 
 FileContent = Union[IO[bytes], bytes, PathLike]
 
