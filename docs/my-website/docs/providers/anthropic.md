@@ -4,6 +4,8 @@ import TabItem from '@theme/TabItem';
 # Anthropic
 LiteLLM supports all anthropic models.
 
+- `claude-sonnet-4-5-20250929`
+- `claude-opus-4-5-20251101`
 - `claude-opus-4-1-20250805`
 - `claude-4` (`claude-opus-4-20250514`, `claude-sonnet-4-20250514`)
 - `claude-3.7` (`claude-3-7-sonnet-20250219`)
@@ -48,6 +50,107 @@ Anthropic API fails requests when `max_tokens` are not passed. Due to this litel
 
 :::
 
+## **Structured Outputs**
+
+LiteLLM supports Anthropic's [structured outputs feature](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) for Claude Sonnet 4.5 and Opus 4.1 models. When you use `response_format` with these models, LiteLLM automatically:
+- Adds the required `structured-outputs-2025-11-13` beta header
+- Transforms OpenAI's `response_format` to Anthropic's `output_format` format
+
+### Supported Models
+- `sonnet-4-5` or `sonnet-4.5` (all Sonnet 4.5 variants)
+- `opus-4-1` or `opus-4.1` (all Opus 4.1 variants)
+  - `opus-4-5` or `opus-4.5` (all Opus 4.5 variants)
+
+### Example Usage
+
+<Tabs>
+<TabItem value="sdk" label="LiteLLM SDK">
+
+```python
+from litellm import completion
+
+response = completion(
+    model="claude-sonnet-4-5-20250929",
+    messages=[{"role": "user", "content": "What is the capital of France?"}],
+    response_format={
+        "type": "json_schema",
+        "json_schema": {
+            "name": "capital_response",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "country": {"type": "string"},
+                    "capital": {"type": "string"}
+                },
+                "required": ["country", "capital"],
+                "additionalProperties": False
+            }
+        }
+    }
+)
+
+print(response.choices[0].message.content)
+# Output: {"country": "France", "capital": "Paris"}
+```
+
+</TabItem>
+<TabItem value="proxy" label="LiteLLM Proxy">
+
+1. Setup config.yaml
+
+```yaml
+model_list:
+  - model_name: claude-sonnet-4-5
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_API_KEY
+```
+
+2. Start proxy
+
+```bash
+litellm --config /path/to/config.yaml
+```
+
+3. Test it!
+
+```bash
+curl http://0.0.0.0:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $LITELLM_KEY" \
+  -d '{
+    "model": "claude-sonnet-4-5",
+    "messages": [{"role": "user", "content": "What is the capital of France?"}],
+    "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "capital_response",
+            "strict": true,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "country": {"type": "string"},
+                    "capital": {"type": "string"}
+                },
+                "required": ["country", "capital"],
+                "additionalProperties": false
+            }
+        }
+    }
+  }'
+```
+
+</TabItem>
+</Tabs>
+
+:::info
+When using structured outputs with supported models, LiteLLM automatically:
+- Converts OpenAI's `response_format` to Anthropic's `output_schema`
+- Adds the `anthropic-beta: structured-outputs-2025-11-13` header
+- Creates a tool with the schema and forces the model to use it
+:::
+
 ## API Keys
 
 ```python
@@ -88,7 +191,7 @@ for chunk in response:
     print(chunk["choices"][0]["delta"]["content"])  # same as openai format
 ```
 
-## Usage with LiteLLM Proxy 
+## Usage with LiteLLM Proxy
 
 Here's how to call Anthropic with the LiteLLM Proxy Server
 
@@ -98,7 +201,7 @@ Here's how to call Anthropic with the LiteLLM Proxy Server
 export ANTHROPIC_API_KEY="your-api-key"
 ```
 
-### 2. Start the proxy 
+### 2. Start the proxy
 
 <Tabs>
 <TabItem value="config" label="config.yaml">
@@ -126,7 +229,7 @@ ANTHROPIC_API_KEY=sk-ant****
 
 ```yaml
 model_list:
-  - model_name: "*" 
+  - model_name: "*"
     litellm_params:
       model: "*"
 ```
@@ -242,7 +345,7 @@ print(response)
 
 ## Supported Models
 
-`Model Name` 👉 Human-friendly name.  
+`Model Name` 👉 Human-friendly name.
 `Function Call` 👉 How to call the model in LiteLLM.
 
 | Model Name       | Function Call                              |
@@ -269,7 +372,7 @@ Use Anthropic Prompt Caching
 
 :::note
 
-Here's what a sample Raw Request from LiteLLM for Anthropic Context Caching looks like: 
+Here's what a sample Raw Request from LiteLLM for Anthropic Context Caching looks like:
 
 ```bash
 POST Request Sent from LiteLLM:
@@ -303,9 +406,9 @@ https://api.anthropic.com/v1/messages \
   "max_tokens": 10
 }'
 ```
-::: 
+:::
 
-### Caching - Large Context Caching 
+### Caching - Large Context Caching
 
 
 This example demonstrates basic Prompt Caching usage, caching the full text of the legal agreement as a prefix while keeping the user instruction uncached.
@@ -314,7 +417,7 @@ This example demonstrates basic Prompt Caching usage, caching the full text of t
 <Tabs>
 <TabItem value="sdk" label="LiteLLM SDK">
 
-```python 
+```python
 response = await litellm.acompletion(
     model="anthropic/claude-3-5-sonnet-20240620",
     messages=[
@@ -353,7 +456,7 @@ Assuming you have a model=`anthropic/claude-3-5-sonnet-20240620` on the [litellm
 
 :::
 
-```python 
+```python
 import openai
 client = openai.AsyncOpenAI(
     api_key="anything",            # litellm proxy api key
@@ -399,7 +502,7 @@ The cache_control parameter is placed on the final tool
 <Tabs>
 <TabItem value="sdk" label="LiteLLM SDK">
 
-```python 
+```python
 import litellm
 
 response = await litellm.acompletion(
@@ -441,7 +544,7 @@ Assuming you have a model=`anthropic/claude-3-5-sonnet-20240620` on the [litellm
 
 :::
 
-```python 
+```python
 import openai
 client = openai.AsyncOpenAI(
     api_key="anything",            # litellm proxy api key
@@ -490,7 +593,7 @@ The conversation history (previous messages) is included in the messages array. 
 <Tabs>
 <TabItem value="sdk" label="LiteLLM SDK">
 
-```python 
+```python
 import litellm
 
 response = await litellm.acompletion(
@@ -550,7 +653,7 @@ Assuming you have a model=`anthropic/claude-3-5-sonnet-20240620` on the [litellm
 
 :::
 
-```python 
+```python
 import openai
 client = openai.AsyncOpenAI(
     api_key="anything",            # litellm proxy api key
@@ -702,7 +805,7 @@ model_list:
 litellm --config /path/to/config.yaml
 ```
 
-3. Test it! 
+3. Test it!
 
 Replace `anything` with your LiteLLM Proxy Virtual Key, if [setup](../proxy/virtual_keys).
 
@@ -722,7 +825,7 @@ curl http://0.0.0.0:4000/v1/chat/completions \
 
 
 
-### MCP Tool Calling 
+### MCP Tool Calling
 
 Here's how to use MCP tool calling with Anthropic:
 
@@ -736,7 +839,7 @@ LiteLLM supports MCP tool calling with Anthropic in the OpenAI Responses API for
 
 
 ```python
-import os 
+import os
 from litellm import completion
 
 os.environ["ANTHROPIC_API_KEY"] = "sk-ant-..."
@@ -761,7 +864,7 @@ response = completion(
 <TabItem value="anthropic_format" label="Anthropic Format">
 
 ```python
-import os 
+import os
 from litellm import completion
 
 os.environ["ANTHROPIC_API_KEY"] = "sk-ant-..."
@@ -804,7 +907,7 @@ model_list:
 litellm --config /path/to/config.yaml
 ```
 
-3. Test it! 
+3. Test it!
 
 <Tabs>
 <TabItem value="openai" label="OpenAI Format">
@@ -845,13 +948,13 @@ curl http://0.0.0.0:4000/v1/chat/completions \
 </TabItem>
 </Tabs>
 
-### Parallel Function Calling 
+### Parallel Function Calling
 
-Here's how to pass the result of a function call back to an anthropic model: 
+Here's how to pass the result of a function call back to an anthropic model:
 
 ```python
 from litellm import completion
-import os 
+import os
 
 os.environ["ANTHROPIC_API_KEY"] = "sk-ant.."
 
@@ -1008,7 +1111,7 @@ print(resp)
 litellm --config /path/to/config.yaml
 ```
 
-3. Test it! 
+3. Test it!
 
 ```bash
 curl http://0.0.0.0:4000/v1/chat/completions \
@@ -1034,9 +1137,9 @@ LiteLLM maps OpenAI's `search_context_size` param to Anthropic's `max_uses` para
 
 | OpenAI | Anthropic |
 | --- | --- |
-| Low | 1 | 
-| Medium | 5 | 
-| High | 10 | 
+| Low | 1 |
+| Medium | 5 |
+| High | 10 |
 
 
 <Tabs>
@@ -1112,7 +1215,7 @@ print(resp)
 litellm --config /path/to/config.yaml
 ```
 
-3. Test it! 
+3. Test it!
 
 <Tabs>
 <TabItem value="openai" label="OpenAI Format">
@@ -1164,7 +1267,7 @@ curl http://0.0.0.0:4000/v1/chat/completions \
 
 
 
-## Usage - Vision 
+## Usage - Vision
 
 ```python
 from litellm import completion
@@ -1245,7 +1348,7 @@ resp = completion(
 litellm --config /path/to/config.yaml
 ```
 
-3. Test it! 
+3. Test it!
 
 ```bash
 curl http://0.0.0.0:4000/v1/chat/completions \
@@ -1364,8 +1467,8 @@ Pass `extra_headers: dict` to `litellm.completion`
 from litellm import completion
 messages = [{"role": "user", "content": "What is Anthropic?"}]
 response = completion(
-    model="claude-3-5-sonnet-20240620", 
-    messages=messages, 
+    model="claude-3-5-sonnet-20240620",
+    messages=messages,
     extra_headers={"anthropic-beta": "max-tokens-3-5-sonnet-2024-07-15"}
 )
 ```
@@ -1431,7 +1534,7 @@ Assistant:
 ```
 
 
-## Usage - PDF 
+## Usage - PDF
 
 Pass base64 encoded PDF files to Anthropic models using the `image_url` field.
 
@@ -1480,7 +1583,7 @@ print(response.choices[0])
 </TabItem>
 <TabItem value="proxy" label="PROXY">
 
-1. Add model to config 
+1. Add model to config
 
 ```yaml
 - model_name: claude-3-5-haiku-20241022
@@ -1495,7 +1598,7 @@ print(response.choices[0])
 litellm --config /path/to/config.yaml
 ```
 
-3. Test it! 
+3. Test it!
 
 ```bash
 curl http://0.0.0.0:4000/v1/chat/completions \
@@ -1528,9 +1631,9 @@ curl http://0.0.0.0:4000/v1/chat/completions \
 </TabItem>
 </Tabs>
 
-## [BETA] Citations API 
+## [BETA] Citations API
 
-Pass `citations: {"enabled": true}` to Anthropic, to get citations on your document responses. 
+Pass `citations: {"enabled": true}` to Anthropic, to get citations on your document responses.
 
 Note: This interface is in BETA. If you have feedback on how citations should be returned, please [tell us here](https://github.com/BerriAI/litellm/issues/7970#issuecomment-2644437943)
 
@@ -1584,7 +1687,7 @@ model_list:
         api_key: os.environ/ANTHROPIC_API_KEY
 ```
 
-2. Start proxy 
+2. Start proxy
 
 ```bash
 litellm --config /path/to/config.yaml
@@ -1592,7 +1695,7 @@ litellm --config /path/to/config.yaml
 # RUNNING on http://0.0.0.0:4000
 ```
 
-3. Test it! 
+3. Test it!
 
 ```bash
 curl -L -X POST 'http://0.0.0.0:4000/v1/chat/completions' \
@@ -1661,7 +1764,7 @@ model_list:
 litellm --config /path/to/config.yaml
 ```
 
-3. Test it! 
+3. Test it!
 
 ```bash
 curl http://0.0.0.0:4000/v1/chat/completions \

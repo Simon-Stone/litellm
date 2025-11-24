@@ -243,16 +243,18 @@
         "supports_tool_choice": true,
         "supports_native_streaming": true
     },
-    "gpt-4.1-nano-2025-04-14": {
-        "max_tokens": 32768,
-        "max_input_tokens": 1047576,
-        "max_output_tokens": 32768,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 4e-07,
-        "input_cost_per_token_batches": 5e-08,
-        "output_cost_per_token_batches": 2e-07,
-        "cache_read_input_token_cost": 2.5e-08,
-        "litellm_provider": "openai",
+    "anthropic.claude-sonnet-4-20250514-v1:0": {
+        "cache_creation_input_token_cost": 3.75e-06,
+        "cache_read_input_token_cost": 3e-07,
+        "input_cost_per_token": 3e-06,
+        "input_cost_per_token_above_200k_tokens": 6e-06,
+        "output_cost_per_token_above_200k_tokens": 2.25e-05,
+        "cache_creation_input_token_cost_above_200k_tokens": 7.5e-06,
+        "cache_read_input_token_cost_above_200k_tokens": 6e-07,
+        "litellm_provider": "bedrock_converse",
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 64000,
+        "max_tokens": 64000,
         "mode": "chat",
         "supported_endpoints": [
             "/v1/chat/completions",
@@ -6722,11 +6724,11 @@
         "supports_reasoning": true,
         "supports_web_search": true
     },
-    "claude-3-5-sonnet-20241022": {
-        "supports_computer_use": true,
-        "max_tokens": 8192,
-        "max_input_tokens": 200000,
-        "max_output_tokens": 8192,
+    "claude-sonnet-4-20250514": {
+        "deprecation_date": "2026-05-14",
+        "cache_creation_input_token_cost": 3.75e-06,
+        "cache_creation_input_token_cost_above_1hr": 6e-06,
+        "cache_read_input_token_cost": 3e-07,
         "input_cost_per_token": 3e-06,
         "output_cost_per_token": 1.5e-05,
         "cache_creation_input_token_cost": 3.75e-06,
@@ -16991,29 +16993,35 @@
         "litellm_provider": "voyage",
         "mode": "embedding"
     },
-    "voyage/voyage-3-lite": {
-        "max_tokens": 32000,
-        "max_input_tokens": 32000,
-        "input_cost_per_token": 2e-08,
-        "output_cost_per_token": 0.0,
-        "litellm_provider": "voyage",
-        "mode": "embedding"
-    },
-    "voyage/voyage-code-3": {
-        "max_tokens": 32000,
-        "max_input_tokens": 32000,
-        "input_cost_per_token": 1.8e-07,
-        "output_cost_per_token": 0.0,
-        "litellm_provider": "voyage",
-        "mode": "embedding"
-    },
-    "voyage/voyage-multimodal-3": {
-        "max_tokens": 32000,
-        "max_input_tokens": 32000,
-        "input_cost_per_token": 1.2e-07,
-        "output_cost_per_token": 0.0,
-        "litellm_provider": "voyage",
-        "mode": "embedding"
+    "us.anthropic.claude-sonnet-4-20250514-v1:0": {
+        "cache_creation_input_token_cost": 3.75e-06,
+        "cache_read_input_token_cost": 3e-07,
+        "input_cost_per_token": 3e-06,
+        "input_cost_per_token_above_200k_tokens": 6e-06,
+        "output_cost_per_token_above_200k_tokens": 2.25e-05,
+        "cache_creation_input_token_cost_above_200k_tokens": 7.5e-06,
+        "cache_read_input_token_cost_above_200k_tokens": 6e-07,
+        "litellm_provider": "bedrock_converse",
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 64000,
+        "max_tokens": 64000,
+        "mode": "chat",
+        "output_cost_per_token": 1.5e-05,
+        "search_context_cost_per_query": {
+            "search_context_size_high": 0.01,
+            "search_context_size_low": 0.01,
+            "search_context_size_medium": 0.01
+        },
+        "supports_assistant_prefill": true,
+        "supports_computer_use": true,
+        "supports_function_calling": true,
+        "supports_pdf_input": true,
+        "supports_prompt_caching": true,
+        "supports_reasoning": true,
+        "supports_response_schema": true,
+        "supports_tool_choice": true,
+        "supports_vision": true,
+        "tool_use_system_prompt_tokens": 159
     },
     "voyage/rerank-2": {
         "max_tokens": 16000,
