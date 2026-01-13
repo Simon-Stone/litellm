@@ -9,14 +9,16 @@ LiteLLM provides flexible cost tracking and pricing customization for all LLM pr
 - **Custom Pricing** - Override default model costs or set pricing for custom models
 - **Cost Per Token** - Track costs based on input/output tokens (most common)
 - **Cost Per Second** - Track costs based on runtime (e.g., Sagemaker)
-- **Provider Discounts** - Apply percentage-based discounts to specific providers
+- **Zero-Cost Models** - Bypass budget checks for free/on-premises models by setting costs to 0
+- **[Provider Discounts](./provider_discounts.md)** - Apply percentage-based discounts to specific providers
+- **[Provider Margins](./provider_margins.md)** - Add fees/margins to LLM costs for internal billing
 - **Base Model Mapping** - Ensure accurate cost tracking for Azure deployments
 
 By default, the response cost is accessible in the logging object via `kwargs["response_cost"]` on success (sync + async). [**Learn More**](../observability/custom_callback.md)
 
 :::info
 
-LiteLLM already has pricing for 100+ models in our [model cost map](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json). 
+LiteLLM already has pricing for 100+ models in our [model cost map](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json).
 
 :::
 
@@ -36,7 +38,7 @@ model_list:
     litellm_params:
       model: sagemaker/berri-benchmarking-gpt-j-6b-fp16
     model_info:
-      input_cost_per_second: 0.000420 
+      input_cost_per_second: 0.000420
 ```
 
 **Step 2: Start proxy**
@@ -144,7 +146,7 @@ model_list:
 There are other keys you can use to specify costs for different scenarios and modalities:
 
 - `input_cost_per_token_above_200k_tokens` - Cost for input tokens when context exceeds 200k tokens
-- `output_cost_per_token_above_200k_tokens` - Cost for output tokens when context exceeds 200k tokens  
+- `output_cost_per_token_above_200k_tokens` - Cost for output tokens when context exceeds 200k tokens
 - `cache_creation_input_token_cost_above_200k_tokens` - Cache creation cost for large contexts
 - `cache_read_input_token_cost_above_200k_token` - Cache read cost for large contexts
 - `input_cost_per_image` - Cost per image in multimodal requests
@@ -156,6 +158,51 @@ There are other keys you can use to specify costs for different scenarios and mo
 - `input_cost_per_character` - Character-based pricing for some providers
 
 These keys evolve based on how new models handle multimodality. The latest version can be found at [https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json).
+
+## Zero-Cost Models (Bypass Budget Checks)
+
+**Use Case**: You have on-premises or free models that should be accessible even when users exceed their budget limits.
+
+**Solution** ✅: Set both `input_cost_per_token` and `output_cost_per_token` to `0` (explicitly) to bypass all budget checks for that model.
+
+:::info
+
+When a model is configured with zero cost, LiteLLM will automatically skip ALL budget checks (user, team, team member, end-user, organization, and global proxy budget) for requests to that model.
+
+**Important**: Both costs must be **explicitly set to 0**. If costs are `null` or undefined, the model will be treated as having cost and budget checks will apply.
+
+:::
+
+### Configuration Example
+
+```yaml
+model_list:
+  # On-premises model - free to use
+  - model_name: on-prem-llama
+    litellm_params:
+      model: ollama/llama3
+      api_base: http://localhost:11434
+    model_info:
+      input_cost_per_token: 0   # 👈 Explicitly set to 0
+      output_cost_per_token: 0  # 👈 Explicitly set to 0
+
+  # Paid cloud model - budget checks apply
+  - model_name: gpt-4
+    litellm_params:
+      model: gpt-4
+      api_key: os.environ/OPENAI_API_KEY
+    # No model_info - uses default pricing from cost map
+```
+
+### Behavior
+
+With the above configuration:
+
+- **User over budget** → Can still use `on-prem-llama` ✅, but blocked from `gpt-4` ❌
+- **Team over budget** → Can still use `on-prem-llama` ✅, but blocked from `gpt-4` ❌
+- **End-user over budget** → Can still use `on-prem-llama` ✅, but blocked from `gpt-4` ❌
+
+This ensures your free/on-premises models remain accessible regardless of budget constraints, while paid models are still properly governed.
 
 ## Set 'base_model' for Cost Tracking (e.g. Azure deployments)
 
@@ -179,7 +226,7 @@ model_list:
 ```
 
 
-## Debugging 
+## Debugging
 
 If you're custom pricing is not being used or you're seeing errors, please check the following:
 
@@ -189,22 +236,22 @@ If you're custom pricing is not being used or you're seeing errors, please check
 litellm --config /path/to/config.yaml --detailed_debug
 ```
 
-2. Check logs for this line: 
+2. Check logs for this line:
 
 ```
 LiteLLM:DEBUG: utils.py:263 - litellm.acompletion
 ```
 
-3. Check if 'input_cost_per_token' and 'output_cost_per_token' are top-level keys in the acompletion function. 
+3. Check if 'input_cost_per_token' and 'output_cost_per_token' are top-level keys in the acompletion function.
 
 ```bash
 acompletion(
   ...,
-  input_cost_per_token: my-custom-price, 
+  input_cost_per_token: my-custom-price,
   output_cost_per_token: my-custom-price,
 )
 ```
 
-If these keys are not present, LiteLLM will not use your custom pricing. 
+If these keys are not present, LiteLLM will not use your custom pricing.
 
-If the problem persists, please file an issue on [GitHub](https://github.com/BerriAI/litellm/issues). 
+If the problem persists, please file an issue on [GitHub](https://github.com/BerriAI/litellm/issues).
