@@ -538,17 +538,17 @@ class JWTHandler:
     async def get_oidc_userinfo(self, token: str) -> dict:
         """
         Fetch user information from OIDC UserInfo endpoint.
-        
+
         This follows the OpenID Connect protocol where an access token
         is sent to the identity provider's UserInfo endpoint to retrieve
         user identity information.
-        
+
         Args:
             token: The access token to use for authentication
-            
+
         Returns:
             dict: User information from the UserInfo endpoint
-            
+
         Raises:
             Exception: If UserInfo endpoint is not configured or request fails
         """
@@ -556,19 +556,19 @@ class JWTHandler:
             raise Exception(
                 "OIDC UserInfo endpoint not configured. Set 'oidc_userinfo_endpoint' in JWT auth config."
             )
-        
+
         # Check cache first
         cache_key = f"oidc_userinfo_{token[:20]}"  # Use first 20 chars of token as cache key
         cached_userinfo = await self.user_api_key_cache.async_get_cache(cache_key)
-        
+
         if cached_userinfo is not None:
             verbose_proxy_logger.debug("Returning cached OIDC UserInfo")
             return cached_userinfo
-        
+
         verbose_proxy_logger.debug(
             f"Calling OIDC UserInfo endpoint: {self.litellm_jwtauth.oidc_userinfo_endpoint}"
         )
-        
+
         try:
             # Call the UserInfo endpoint with the access token
             response = await self.http_handler.get(
@@ -578,24 +578,24 @@ class JWTHandler:
                     "Accept": "application/json",
                 },
             )
-            
+
             if response.status_code != 200:
                 raise Exception(
                     f"OIDC UserInfo endpoint returned status {response.status_code}: {response.text}"
                 )
-            
+
             userinfo = response.json()
             verbose_proxy_logger.debug(f"Received OIDC UserInfo: {userinfo}")
-            
+
             # Cache the userinfo response
             await self.user_api_key_cache.async_set_cache(
                 key=cache_key,
                 value=userinfo,
                 ttl=self.litellm_jwtauth.oidc_userinfo_cache_ttl,
             )
-            
+
             return userinfo
-            
+
         except Exception as e:
             verbose_proxy_logger.error(f"Error fetching OIDC UserInfo: {str(e)}")
             raise Exception(f"Failed to fetch OIDC UserInfo: {str(e)}")
@@ -1025,14 +1025,15 @@ class JWTAuthManager:
         proxy_logging_obj: ProxyLogging,
         route: str,
         org_alias: Optional[str] = None,
+        skip_budget_checks: bool = False,
     ) -> Tuple[
         Optional[LiteLLM_UserTable],
         Optional[LiteLLM_OrganizationTable],
-        Optional[LiteLLM_EndUserTable], 
+        Optional[LiteLLM_EndUserTable],
         Optional[LiteLLM_TeamMembership],
     ]:
         """Get user, org, and end user objects. Also resolves org aliases to IDs if configured."""
-        
+
         # Get org object - first try by ID, then by alias
         org_object: Optional[LiteLLM_OrganizationTable] = None
         if org_id:
@@ -1092,6 +1093,7 @@ class JWTAuthManager:
                     parent_otel_span=parent_otel_span,
                     proxy_logging_obj=proxy_logging_obj,
                     route=route,
+                    skip_budget_checks=skip_budget_checks,
                 )
                 if end_user_id
                 else None
@@ -1407,6 +1409,21 @@ class JWTAuthManager:
         # Extract alias fields for resolution (if configured)
         org_alias = jwt_handler.get_org_alias(token=jwt_valid_token, default_value=None)
 
+        # Check if model has zero cost early to skip budget checks
+        from litellm.proxy.auth.auth_utils import get_model_from_request
+        from litellm.proxy.proxy_server import llm_router
+
+        model = get_model_from_request(request_data, route)
+        skip_budget_checks = False
+        if model is not None and llm_router is not None:
+            from litellm.proxy.auth.auth_checks import _is_model_cost_zero
+
+            skip_budget_checks = _is_model_cost_zero(model=model, llm_router=llm_router)
+            if skip_budget_checks:
+                verbose_proxy_logger.info(
+                    f"JWT Auth: Detected zero-cost model: {model}. Will skip all budget checks including end user budget."
+                )
+
         # Get other objects
         user_object, org_object, end_user_object, team_membership_object = (
             await JWTAuthManager.get_objects(
@@ -1423,6 +1440,7 @@ class JWTAuthManager:
                 proxy_logging_obj=proxy_logging_obj,
                 route=route,
                 org_alias=org_alias,
+                skip_budget_checks=skip_budget_checks,
             )
         )
 

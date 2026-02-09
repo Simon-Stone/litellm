@@ -79,27 +79,27 @@ def _is_model_cost_zero(
 ) -> bool:
     """
     Check if a model has zero cost (no configured pricing).
-    
+
     Uses the router's get_model_group_info method to get pricing information.
-    
+
     Args:
         model: The model name or list of model names
         llm_router: The LiteLLM router instance
-    
+
     Returns:
         bool: True if all costs for the model are zero, False otherwise
     """
     if model is None or llm_router is None:
         return False
-    
+
     # Handle list of models
     model_list = [model] if isinstance(model, str) else model
-    
+
     for model_name in model_list:
         try:
             # Use router's get_model_group_info method directly for better reliability
             model_group_info = llm_router.get_model_group_info(model_group=model_name)
-            
+
             if model_group_info is None:
                 # Model not found or no pricing info available
                 # Conservative approach: assume it has cost
@@ -107,38 +107,38 @@ def _is_model_cost_zero(
                     f"No model group info found for {model_name}, assuming it has cost"
                 )
                 return False
-            
+
             # Check costs for this model
             # Only allow bypass if BOTH costs are explicitly set to 0 (not None)
             input_cost = model_group_info.input_cost_per_token
             output_cost = model_group_info.output_cost_per_token
-            
+
             # If costs are not explicitly configured (None), assume it has cost
             if input_cost is None or output_cost is None:
                 verbose_proxy_logger.debug(
                     f"Model {model_name} has undefined cost (input: {input_cost}, output: {output_cost}), assuming it has cost"
                 )
                 return False
-            
+
             # If either cost is non-zero, return False
             if input_cost > 0 or output_cost > 0:
                 verbose_proxy_logger.debug(
                     f"Model {model_name} has non-zero cost (input: {input_cost}, output: {output_cost})"
                 )
                 return False
-            
+
             # This model has zero cost explicitly configured
             verbose_proxy_logger.debug(
                 f"Model {model_name} has zero cost explicitly configured (input: {input_cost}, output: {output_cost})"
             )
-            
+
         except Exception as e:
             # If we can't determine the cost, assume it has cost (conservative approach)
             verbose_proxy_logger.debug(
                 f"Error checking cost for model {model_name}: {str(e)}, assuming it has cost"
             )
             return False
-    
+
     # All models checked have zero cost
     return True
 
@@ -677,6 +677,7 @@ async def _apply_default_budget_to_end_user(
 def _check_end_user_budget(
     end_user_obj: LiteLLM_EndUserTable,
     route: str,
+    skip_budget_checks: bool = False,
 ) -> None:
     """
     Check if end user is within their budget limit.
@@ -684,10 +685,17 @@ def _check_end_user_budget(
     Args:
         end_user_obj: The end user object to check
         route: The request route
+        skip_budget_checks: If True, skip budget validation (e.g., for zero-cost models)
 
     Raises:
         litellm.BudgetExceededError: If end user has exceeded their budget
     """
+    if skip_budget_checks:
+        verbose_proxy_logger.debug(
+            f"Skipping end user budget check for {end_user_obj.user_id} (zero-cost model)"
+        )
+        return
+
     if route in LiteLLMRoutes.info_routes.value:
         return
 
@@ -711,6 +719,7 @@ async def get_end_user_object(
     route: str,
     parent_otel_span: Optional[Span] = None,
     proxy_logging_obj: Optional[ProxyLogging] = None,
+    skip_budget_checks: bool = False,
 ) -> Optional[LiteLLM_EndUserTable]:
     """
     Returns end user object from database or cache.
@@ -725,6 +734,7 @@ async def get_end_user_object(
         route: The request route
         parent_otel_span: Optional OpenTelemetry span for tracing
         proxy_logging_obj: Optional proxy logging object
+        skip_budget_checks: If True, skip budget validation (e.g., for zero-cost models)
 
     Returns:
         LiteLLM_EndUserTable if found, None otherwise
@@ -751,7 +761,9 @@ async def get_end_user_object(
         )
 
         # Check budget limits
-        _check_end_user_budget(end_user_obj=return_obj, route=route)
+        _check_end_user_budget(
+            end_user_obj=return_obj, route=route, skip_budget_checks=skip_budget_checks
+        )
 
         return return_obj
 
@@ -782,7 +794,9 @@ async def get_end_user_object(
         )
 
         # Check budget limits
-        _check_end_user_budget(end_user_obj=_response, route=route)
+        _check_end_user_budget(
+            end_user_obj=_response, route=route, skip_budget_checks=skip_budget_checks
+        )
 
         return _response
 

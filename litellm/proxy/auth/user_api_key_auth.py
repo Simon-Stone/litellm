@@ -587,13 +587,13 @@ async def _user_api_key_auth_builder(  # noqa: PLR0915
                     if team_object is not None
                     else None,
                 )
-                
+
                 # Check if model has zero cost - if so, skip all budget checks
                 model = get_model_from_request(request_data, route)
                 skip_budget_checks = False
                 if model is not None and llm_router is not None:
                     from litellm.proxy.auth.auth_checks import _is_model_cost_zero
-                    
+
                     skip_budget_checks = _is_model_cost_zero(
                         model=model, llm_router=llm_router
                     )
@@ -601,7 +601,7 @@ async def _user_api_key_auth_builder(  # noqa: PLR0915
                         verbose_proxy_logger.info(
                             f"Skipping all budget checks for zero-cost model: {model}"
                         )
-                
+
                 # run through common checks
                 _ = await common_checks(
                     request=request,
@@ -667,6 +667,18 @@ async def _user_api_key_auth_builder(  # noqa: PLR0915
         _end_user_object = None
         end_user_params = {}
 
+        # Check if model has zero cost early to skip budget checks
+        model = get_model_from_request(request_data, route)
+        skip_budget_checks = False
+        if model is not None and llm_router is not None:
+            from litellm.proxy.auth.auth_checks import _is_model_cost_zero
+
+            skip_budget_checks = _is_model_cost_zero(model=model, llm_router=llm_router)
+            if skip_budget_checks:
+                verbose_proxy_logger.info(
+                    f"Detected zero-cost model early: {model}. Will skip all budget checks including end user budget."
+                )
+
         end_user_id = get_end_user_id_from_request_body(
             request_data, _safe_get_request_headers(request)
         )
@@ -682,6 +694,7 @@ async def _user_api_key_auth_builder(  # noqa: PLR0915
                     parent_otel_span=parent_otel_span,
                     proxy_logging_obj=proxy_logging_obj,
                     route=route,
+                    skip_budget_checks=skip_budget_checks,
                 )
                 if _end_user_object is not None:
                     end_user_params[
@@ -1012,7 +1025,7 @@ async def _user_api_key_auth_builder(  # noqa: PLR0915
             skip_budget_checks = False
             if model is not None and llm_router is not None:
                 from litellm.proxy.auth.auth_checks import _is_model_cost_zero
-                
+
                 skip_budget_checks = _is_model_cost_zero(
                     model=model, llm_router=llm_router
                 )
