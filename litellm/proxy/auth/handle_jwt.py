@@ -1137,6 +1137,7 @@ class JWTAuthManager:
         proxy_logging_obj: ProxyLogging,
         route: str,
         org_alias: Optional[str] = None,
+        skip_budget_checks: bool = False,
     ) -> Tuple[
         Optional[LiteLLM_UserTable],
         Optional[LiteLLM_OrganizationTable],
@@ -1213,6 +1214,7 @@ class JWTAuthManager:
                     parent_otel_span=parent_otel_span,
                     proxy_logging_obj=proxy_logging_obj,
                     route=route,
+                    skip_budget_checks=skip_budget_checks,
                 )
                 if end_user_id
                 else None
@@ -1547,6 +1549,21 @@ class JWTAuthManager:
         # Extract alias fields for resolution (if configured)
         org_alias = jwt_handler.get_org_alias(token=jwt_valid_token, default_value=None)
 
+        # Check if model has zero cost early to skip budget checks
+        from litellm.proxy.auth.auth_utils import get_model_from_request
+        from litellm.proxy.proxy_server import llm_router
+
+        model = get_model_from_request(request_data, route)
+        skip_budget_checks = False
+        if model is not None and llm_router is not None:
+            from litellm.proxy.auth.auth_checks import _is_model_cost_zero
+
+            skip_budget_checks = _is_model_cost_zero(model=model, llm_router=llm_router)
+            if skip_budget_checks:
+                verbose_proxy_logger.info(
+                    f"JWT Auth: Detected zero-cost model: {model}. Will skip all budget checks including end user budget."
+                )
+
         # Get other objects
         (
             user_object,
@@ -1567,6 +1584,7 @@ class JWTAuthManager:
             proxy_logging_obj=proxy_logging_obj,
             route=route,
             org_alias=org_alias,
+            skip_budget_checks=skip_budget_checks,
         )
 
         # Derive org_id from org_object if resolved by alias
