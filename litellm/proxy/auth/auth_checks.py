@@ -1021,6 +1021,7 @@ async def _apply_default_budget_to_end_user(
 async def _check_end_user_budget(
     end_user_obj: LiteLLM_EndUserTable,
     route: str,
+    skip_budget_checks: bool = False,
 ) -> None:
     """
     Check if end user is within their budget limit.
@@ -1028,10 +1029,17 @@ async def _check_end_user_budget(
     Args:
         end_user_obj: The end user object to check
         route: The request route
+        skip_budget_checks: If True, skip budget validation (e.g., for zero-cost models)
 
     Raises:
         litellm.BudgetExceededError: If end user has exceeded their budget
     """
+    if skip_budget_checks:
+        verbose_proxy_logger.debug(
+            f"Skipping end user budget check for {end_user_obj.user_id} (zero-cost model)"
+        )
+        return
+
     if RouteChecks.is_info_route(route):
         return
 
@@ -1064,6 +1072,7 @@ async def get_end_user_object(
     route: str,
     parent_otel_span: Optional[Span] = None,
     proxy_logging_obj: Optional[ProxyLogging] = None,
+    skip_budget_checks: bool = False,
 ) -> Optional[LiteLLM_EndUserTable]:
     """
     Returns end user object from database or cache.
@@ -1078,6 +1087,7 @@ async def get_end_user_object(
         route: The request route
         parent_otel_span: Optional OpenTelemetry span for tracing
         proxy_logging_obj: Optional proxy logging object
+        skip_budget_checks: If True, skip budget validation (e.g., for zero-cost models)
 
     Returns:
         LiteLLM_EndUserTable if found, None otherwise
@@ -1106,7 +1116,9 @@ async def get_end_user_object(
         )
 
         # Check budget limits
-        await _check_end_user_budget(end_user_obj=return_obj, route=route)
+        await _check_end_user_budget(
+            end_user_obj=return_obj, route=route, skip_budget_checks=skip_budget_checks
+        )
 
         return return_obj
 
@@ -1139,7 +1151,9 @@ async def get_end_user_object(
         )
 
         # Check budget limits
-        await _check_end_user_budget(end_user_obj=_response, route=route)
+        await _check_end_user_budget(
+            end_user_obj=_response, route=route, skip_budget_checks=skip_budget_checks
+        )
 
         return _response
 
