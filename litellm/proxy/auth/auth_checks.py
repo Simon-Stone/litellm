@@ -848,9 +848,6 @@ async def get_end_user_object(
             parent_otel_span=parent_otel_span,
         )
 
-        # Check budget limits
-        _check_end_user_budget(end_user_obj=return_obj, route=route)
-
         return return_obj
 
     # Fetch from database
@@ -878,9 +875,6 @@ async def get_end_user_object(
         await user_api_key_cache.async_set_cache(
             key="end_user_id:{}".format(end_user_id), value=_response.dict()
         )
-
-        # Check budget limits
-        _check_end_user_budget(end_user_obj=_response, route=route)
 
         return _response
 
