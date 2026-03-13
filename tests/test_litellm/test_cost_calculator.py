@@ -393,6 +393,114 @@ def test_custom_pricing_with_upsert_deployment():
     assert result._hidden_params.get("response_cost") is not None
 
 
+@pytest.mark.asyncio
+async def test_custom_pricing_in_responses_api_litellm_params():
+    """
+    Test that custom pricing fields from router deployment config are included
+    in the litellm_params dict passed to update_environment_variables() during
+    Responses API calls.
+
+    This is a regression test for the bug where the Responses API
+    (litellm/responses/main.py) was NOT passing custom pricing fields
+    (input_cost_per_token, output_cost_per_token, etc.) to the logging object,
+    causing use_custom_pricing_for_model() to return False and the cost
+    calculator to ignore custom pricing.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    import litellm
+    from litellm.integrations.custom_logger import CustomLogger
+    from litellm.types.llms.openai import ResponsesAPIResponse
+
+    captured = {}
+    done_event = asyncio.Event()
+
+    class PricingCaptureLogger(CustomLogger):
+        async def async_log_success_event(
+            self, kwargs, response_obj, start_time, end_time
+        ):
+            captured["litellm_params"] = kwargs.get("litellm_params", {})
+            captured["response_cost"] = kwargs.get("response_cost")
+            done_event.set()
+
+    # Build a minimal mock ResponsesAPIResponse
+    mock_resp = ResponsesAPIResponse.model_construct(
+        id="resp-pricing-test",
+        created_at=0,
+        output=[
+            {
+                "type": "message",
+                "id": "msg-1",
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Hi!"}],
+            }
+        ],
+        object="response",
+        model="openai/gpt-5.2-2025-12-11",
+        status="completed",
+        usage={
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "total_tokens": 150,
+        },
+    )
+
+    class MockHTTPResponse:
+        status_code = 200
+        headers = {}
+        text = ""
+
+        def json(self):
+            return mock_resp.model_dump()
+
+    original_callbacks = litellm.callbacks[:]
+    logger = PricingCaptureLogger()
+    litellm.callbacks = [logger]
+
+    try:
+        with patch(
+            "litellm.llms.custom_httpx.http_handler.AsyncHTTPHandler.post",
+            new_callable=AsyncMock,
+            return_value=MockHTTPResponse(),
+        ):
+            await litellm.aresponses(
+                model="openai/gpt-5.2-2025-12-11",
+                input="Hello",
+                # Simulate custom pricing fields injected by router from deployment config
+                input_cost_per_token=0.00175,
+                output_cost_per_token=0.014,
+            )
+
+        # Wait for async callback to fire
+        await asyncio.wait_for(done_event.wait(), timeout=5.0)
+
+        # Assert that custom pricing fields made it into litellm_params
+        assert "litellm_params" in captured, "Callback was not invoked"
+        lp = captured["litellm_params"]
+
+        assert (
+            lp.get("input_cost_per_token") == 0.00175
+        ), f"input_cost_per_token not in litellm_params: {lp}"
+        assert (
+            lp.get("output_cost_per_token") == 0.014
+        ), f"output_cost_per_token not in litellm_params: {lp}"
+
+        # Assert that some cost was computed (not None)
+        # Note: when not called via Router the router_model_id is not in hidden_params,
+        # so cost is looked up by model name rather than by custom per-token prices.
+        # The fix ensures custom_pricing=True is set in the logging object via litellm_params,
+        # which enables the router_model_id lookup path when called through the Router.
+        actual_cost = captured.get("response_cost")
+        assert actual_cost is not None, "response_cost should be computed"
+        assert (
+            actual_cost >= 0
+        ), f"response_cost should be non-negative, got {actual_cost}"
+    finally:
+        litellm.callbacks = original_callbacks
+
+
 def test_azure_realtime_cost_calculator():
     os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     litellm.model_cost = litellm.get_model_cost_map(url="")
