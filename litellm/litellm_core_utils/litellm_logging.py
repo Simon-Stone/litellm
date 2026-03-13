@@ -1418,6 +1418,25 @@ class Logging(LiteLLMLoggingBaseClass):
             ):  # use model_id if not already set
                 router_model_id = hidden_params["model_id"]
 
+        # Fallback: extract router_model_id from litellm_params metadata/litellm_metadata model_info
+        # This handles non-streaming Responses API where _hidden_params["model_id"] is not set.
+        # The router puts model_info under "litellm_metadata" for generic API calls (responses, etc.)
+        # and under "metadata" for standard completion calls.
+        if router_model_id is None:
+            try:
+                _lp = self.model_call_details.get("litellm_params") or {}
+                # Check litellm_metadata first (Responses API / generic API calls)
+                _litellm_meta = _lp.get("litellm_metadata") or {}
+                router_model_id = (_litellm_meta.get("model_info") or {}).get(
+                    "id"
+                ) or None
+                if router_model_id is None:
+                    # Fall back to metadata (standard completion calls)
+                    _meta = _lp.get("metadata") or {}
+                    router_model_id = (_meta.get("model_info") or {}).get("id") or None
+            except Exception:
+                pass
+
         ## RESPONSE COST ##
         custom_pricing = use_custom_pricing_for_model(
             litellm_params=(
@@ -4709,12 +4728,14 @@ class StandardLoggingPayloadSetup:
         custom_pricing: Optional[bool],
         custom_llm_provider: Optional[str],
         init_response_obj: Union[Any, BaseModel, dict],
+        router_model_id: Optional[str] = None,
     ) -> StandardLoggingModelInformation:
         model_cost_name = _select_model_name_for_cost_calc(
             model=None,
             completion_response=init_response_obj,  # type: ignore
             base_model=base_model,
             custom_pricing=custom_pricing,
+            router_model_id=router_model_id,
         )
         if model_cost_name is None:
             model_cost_information = StandardLoggingModelInformation(
@@ -5236,6 +5257,7 @@ def get_standard_logging_object_payload(
             custom_pricing=custom_pricing,
             custom_llm_provider=kwargs.get("custom_llm_provider"),
             init_response_obj=init_response_obj,
+            router_model_id=_model_id or None,
         )
         response_cost: float = kwargs.get("response_cost", 0) or 0.0
 
@@ -5539,4 +5561,3 @@ def create_dummy_standard_logging_payload() -> StandardLoggingPayload:
         model_parameters={"stream": True},
         hidden_params=hidden_params,
     )
-

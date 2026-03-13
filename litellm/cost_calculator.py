@@ -640,7 +640,10 @@ def _select_model_name_for_cost_calc(
 
     if custom_pricing is True:
         if router_model_id is not None and router_model_id in litellm.model_cost:
-            return_model = router_model_id
+            # router_model_id is a UUID key directly in model_cost (custom pricing).
+            # Return it immediately — do NOT append a provider prefix, as the UUID
+            # key is stored as-is and a prefix would cause a lookup miss.
+            return router_model_id
         else:
             return_model = model
 
@@ -2168,4 +2171,3 @@ def handle_realtime_stream_cost_calculation(
     total_cost = input_cost_per_token + output_cost_per_token
 
     return total_cost
-

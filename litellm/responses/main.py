@@ -53,6 +53,7 @@ else:
     ResponseText = str  # Fallback for ResponseText import
 from litellm.types.responses.main import *
 from litellm.types.router import GenericLiteLLMParams
+from litellm.types.utils import CustomPricingLiteLLMParams
 from litellm.utils import ProviderConfigManager, client
 
 if TYPE_CHECKING:
@@ -715,12 +716,22 @@ def responses(
         # When called from completion bridge (codex models), metadata is in litellm_metadata
         metadata_for_callbacks = metadata or kwargs.get("litellm_metadata") or {}
 
+        # Extract custom pricing fields from litellm_params (populated from router
+        # deployment config via kwargs). This ensures custom pricing set in the admin UI
+        # or router deployment is propagated to the logging object so that
+        # use_custom_pricing_for_model() returns True and cost is calculated correctly.
+        _custom_pricing_fields = litellm_params.model_dump(
+            include=set(CustomPricingLiteLLMParams.model_fields.keys()),
+            exclude_none=True,
+        )
+
         litellm_logging_obj.update_environment_variables(
             model=model,
             user=user,
             optional_params=dict(responses_api_request_params),
             litellm_params={
                 **responses_api_request_params,
+                **_custom_pricing_fields,
                 "aresponses": _is_async,
                 "litellm_call_id": litellm_call_id,
                 "metadata": metadata_for_callbacks,
@@ -1590,11 +1601,21 @@ def compact_responses(
         )
 
         # Pre Call logging
+        # Extract custom pricing fields from litellm_params (populated from router
+        # deployment config via kwargs). This ensures custom pricing set in the admin UI
+        # or router deployment is propagated to the logging object so that
+        # use_custom_pricing_for_model() returns True and cost is calculated correctly.
+        _custom_pricing_fields = litellm_params.model_dump(
+            include=set(CustomPricingLiteLLMParams.model_fields.keys()),
+            exclude_none=True,
+        )
+
         litellm_logging_obj.update_environment_variables(
             model=model,
             optional_params=dict(responses_api_request_params),
             litellm_params={
                 **responses_api_request_params,
+                **_custom_pricing_fields,
                 "litellm_call_id": litellm_call_id,
             },
             custom_llm_provider=custom_llm_provider,
