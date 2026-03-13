@@ -2386,7 +2386,6 @@ class Router:
         self, model: str, messages: List[AllMessageValues], priority: int, stream: Literal[False] = False, **kwargs
     ) -> ModelResponse: 
         ...
-    
     @overload
     async def schedule_acompletion(
         self, model: str, messages: List[AllMessageValues], priority: int, stream: Literal[True], **kwargs
@@ -6666,6 +6665,21 @@ class Router:
 
         # add to model list
         _deployment = deployment.to_json(exclude_none=True)
+
+        _model_info = _deployment.get("model_info", {})
+        for field in CustomPricingLiteLLMParams.model_fields.keys():
+            if deployment.litellm_params.get(field) is not None:
+                _model_info[field] = deployment.litellm_params[field]
+
+        ## REGISTER MODEL INFO IN LITELLM MODEL COST MAP
+        model_id = deployment.model_info.id
+        if model_id is not None:
+            litellm.register_model(
+                model_cost={
+                    model_id: _model_info,
+                }
+            )
+
         # initialize client
         self._add_deployment(deployment=deployment)
 

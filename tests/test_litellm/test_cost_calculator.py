@@ -332,6 +332,67 @@ def test_custom_pricing_with_router_model_id():
     assert model_info["cache_read_input_token_cost"] == 0.0000006
 
 
+def test_custom_pricing_with_upsert_deployment():
+    """
+    Test that custom pricing is properly registered in litellm.model_cost
+    when using upsert_deployment (the code path used when DB models are
+    loaded into an already-initialized router, e.g. proxy with config file + DB models).
+
+    This is a regression test for the bug where custom pricing wasn't applied
+    to models defined via the admin UI when a config file was also passed.
+    """
+    import litellm
+    from litellm import Router
+    from litellm.types.router import Deployment, LiteLLM_Params, ModelInfo
+
+    # Step 1: Create a router with a basic model (simulating config file init)
+    router = Router(
+        model_list=[
+            {
+                "model_name": "config-model",
+                "litellm_params": {
+                    "model": "openai/gpt-4o",
+                    "api_key": "test_api_key",
+                },
+            },
+        ]
+    )
+
+    # Step 2: Upsert a deployment with custom pricing (simulating DB model sync)
+    custom_model_id = "db-model-custom-pricing-id"
+    deployment = Deployment(
+        model_name="db-model",
+        litellm_params=LiteLLM_Params(
+            model="anthropic/claude-sonnet-4-5-20250929",
+            api_key="test_api_key",
+            input_cost_per_token=0.000111,
+            output_cost_per_token=0.000222,
+        ),
+        model_info=ModelInfo(
+            id=custom_model_id,
+        ),
+    )
+
+    router.upsert_deployment(deployment=deployment)
+
+    # Step 3: Verify custom pricing is registered in litellm.model_cost
+    assert custom_model_id in litellm.model_cost, (
+        f"Model ID '{custom_model_id}' should be registered in litellm.model_cost "
+        f"after upsert_deployment. Keys: {list(litellm.model_cost.keys())[:10]}..."
+    )
+    assert litellm.model_cost[custom_model_id]["input_cost_per_token"] == 0.000111
+    assert litellm.model_cost[custom_model_id]["output_cost_per_token"] == 0.000222
+
+    # Step 4: Verify the model works with mock and picks up custom pricing
+    result = router.completion(
+        model="db-model",
+        messages=[{"role": "user", "content": "Hello!"}],
+        mock_response=True,
+    )
+    # The response cost should be based on our custom pricing, not default
+    assert result._hidden_params.get("response_cost") is not None
+
+
 def test_azure_realtime_cost_calculator():
     os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     litellm.model_cost = litellm.get_model_cost_map(url="")
