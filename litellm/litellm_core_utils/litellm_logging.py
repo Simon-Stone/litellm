@@ -4921,12 +4921,14 @@ class StandardLoggingPayloadSetup:
         custom_llm_provider: Optional[str],
         init_response_obj: Union[Any, BaseModel, dict],
         api_base: Optional[str] = None,
+        router_model_id: Optional[str] = None,
     ) -> StandardLoggingModelInformation:
         model_cost_name = _select_model_name_for_cost_calc(
             model=None,
             completion_response=init_response_obj,  # type: ignore
             base_model=base_model,
             custom_pricing=custom_pricing,
+            router_model_id=router_model_id,
         )
         if model_cost_name is None:
             model_cost_information = StandardLoggingModelInformation(
@@ -5464,6 +5466,7 @@ def get_standard_logging_object_payload(
             custom_llm_provider=kwargs.get("custom_llm_provider"),
             init_response_obj=init_response_obj,
             api_base=litellm_params.get("api_base"),
+            router_model_id=_model_id or None,
         )
         response_cost: float = kwargs.get("response_cost", 0) or 0.0
 
