@@ -57,6 +57,7 @@ from litellm.litellm_core_utils.get_litellm_params import get_litellm_params
 from litellm.secret_managers.main import get_secret_str
 from litellm.types.responses.main import *
 from litellm.types.router import GenericLiteLLMParams
+from litellm.types.utils import CustomPricingLiteLLMParams
 from litellm.utils import ProviderConfigManager, client
 
 if TYPE_CHECKING:
@@ -1128,6 +1129,16 @@ def responses(
             )
         )
 
+        # Extract custom pricing fields from litellm_params (populated from router
+        # deployment config via kwargs). This ensures custom pricing set in the admin UI
+        # or router deployment is propagated to the logging object so that
+        # use_custom_pricing_for_model() returns True and cost is calculated correctly.
+        _custom_pricing_fields = litellm_params.model_dump(
+            include=set(CustomPricingLiteLLMParams.model_fields.keys()),
+            exclude_none=True,
+        )
+
+        # Pre Call logging
         litellm_logging_obj.update_from_kwargs(
             kwargs=kwargs,
             model=model,
@@ -1135,6 +1146,7 @@ def responses(
             optional_params=dict(responses_api_request_params),
             litellm_params={
                 **responses_api_request_params,
+                **_custom_pricing_fields,
                 "aresponses": _is_async,
                 "litellm_call_id": litellm_call_id,
                 "model_info": kwargs.get("model_info"),
@@ -2023,6 +2035,15 @@ def compact_responses(
             )
         )
 
+        # Extract custom pricing fields from litellm_params (populated from router
+        # deployment config via kwargs). This ensures custom pricing set in the admin UI
+        # or router deployment is propagated to the logging object so that
+        # use_custom_pricing_for_model() returns True and cost is calculated correctly.
+        _custom_pricing_fields = litellm_params.model_dump(
+            include=set(CustomPricingLiteLLMParams.model_fields.keys()),
+            exclude_none=True,
+        )
+
         # Pre Call logging
         litellm_logging_obj.update_from_kwargs(
             kwargs=local_vars,
@@ -2030,6 +2051,7 @@ def compact_responses(
             optional_params=dict(responses_api_request_params),
             litellm_params={
                 **responses_api_request_params,
+                **_custom_pricing_fields,
                 "litellm_call_id": litellm_call_id,
             },
             custom_llm_provider=custom_llm_provider,
