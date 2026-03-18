@@ -1195,6 +1195,7 @@ def completion_cost(  # noqa: PLR0915
                         size=size,
                         optional_params=optional_params,
                         call_type=call_type,
+                        router_model_id=router_model_id,
                     )
                 elif call_type in _VIDEO_CALL_TYPES:
                     ### VIDEO GENERATION COST CALCULATION ###
@@ -1430,7 +1431,6 @@ def completion_cost(  # noqa: PLR0915
                     )
                 else:
                     additional_costs = None
-
 
                 _final_cost = (
                     prompt_tokens_cost_usd_dollar + completion_tokens_cost_usd_dollar
