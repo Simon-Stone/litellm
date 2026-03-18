@@ -15,6 +15,7 @@ def cost_calculator(
     model: str,
     image_response: ImageResponse,
     custom_llm_provider: Optional[str] = None,
+    router_model_id: Optional[str] = None,
 ) -> float:
     """
     Calculate cost for OpenAI gpt-image-1 and gpt-image-1-mini models.
@@ -26,10 +27,15 @@ def cost_calculator(
         model: The model name (e.g., "gpt-image-1", "gpt-image-1-mini")
         image_response: The ImageResponse containing usage data
         custom_llm_provider: Optional provider name
+        router_model_id: Optional router model UUID. When set and the UUID is
+            registered in litellm.model_cost with custom pricing, it is used
+            for the pricing lookup so that custom pricing is applied correctly.
 
     Returns:
         float: Total cost in USD
     """
+    import litellm
+
     usage = getattr(image_response, "usage", None)
 
     if usage is None:
@@ -51,9 +57,17 @@ def cost_calculator(
             ResponseAPILoggingUtils._transform_response_api_usage_to_chat_usage(usage)
         )
 
+    # If a router_model_id (UUID) is available and is registered in model_cost
+    # with custom pricing, use it for the pricing lookup so that the custom
+    # output_cost_per_image_token (and other overrides) are applied.
+    # Otherwise fall back to the regular model name.
+    pricing_model = model
+    if router_model_id is not None and router_model_id in litellm.model_cost:
+        pricing_model = router_model_id
+
     # Use generic_cost_per_token for cost calculation
     prompt_cost, completion_cost = generic_cost_per_token(
-        model=model,
+        model=pricing_model,
         usage=chat_usage,
         custom_llm_provider=custom_llm_provider or "openai",
     )
