@@ -684,7 +684,7 @@ def generic_cost_per_token(  # noqa: PLR0915
             - cache_creation
             - image_tokens
         )
-        # Clamp to zero: inconsistent streaming usage 
+        # Clamp to zero: inconsistent streaming usage
         if text_tokens < 0:
             text_tokens = 0
         prompt_tokens_details["text_tokens"] = text_tokens
@@ -865,6 +865,7 @@ class CostCalculatorUtils:
         size: Optional[str] = None,
         optional_params: Optional[dict] = None,
         call_type: Optional[str] = None,
+        router_model_id: Optional[str] = None,
     ) -> float:
         """
         Route the image generation cost calculator based on the custom_llm_provider
@@ -984,7 +985,7 @@ class CostCalculatorUtils:
         elif custom_llm_provider == litellm.LlmProviders.OPENAI.value:
             # Check if this is a gpt-image model (token-based pricing)
             model_lower = model.lower()
-            if "gpt-image-1" in model_lower:
+            if "gpt-image" in model_lower:
                 from litellm.llms.openai.image_generation.cost_calculator import (
                     cost_calculator as openai_gpt_image_cost_calculator,
                 )
@@ -993,6 +994,7 @@ class CostCalculatorUtils:
                     model=model,
                     image_response=completion_response,
                     custom_llm_provider=custom_llm_provider,
+                    router_model_id=router_model_id,
                 )
             # Fall through to default for DALL-E models
             return default_image_cost_calculator(
@@ -1015,6 +1017,7 @@ class CostCalculatorUtils:
                     model=model,
                     image_response=completion_response,
                     custom_llm_provider=custom_llm_provider,
+                    router_model_id=router_model_id,
                 )
             # Fall through to default for DALL-E models
             return default_image_cost_calculator(
