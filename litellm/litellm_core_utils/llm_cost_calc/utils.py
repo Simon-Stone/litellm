@@ -914,6 +914,7 @@ class CostCalculatorUtils:
         size: Optional[str] = None,
         optional_params: Optional[dict] = None,
         call_type: Optional[str] = None,
+        router_model_id: Optional[str] = None,
     ) -> float:
         """
         Route the image generation cost calculator based on the custom_llm_provider
@@ -1042,6 +1043,7 @@ class CostCalculatorUtils:
                     model=model,
                     image_response=completion_response,
                     custom_llm_provider=custom_llm_provider,
+                    router_model_id=router_model_id,
                 )
             # Fall through to default for DALL-E models
             return default_image_cost_calculator(
@@ -1064,6 +1066,7 @@ class CostCalculatorUtils:
                     model=model,
                     image_response=completion_response,
                     custom_llm_provider=custom_llm_provider,
+                    router_model_id=router_model_id,
                 )
             # Fall through to default for DALL-E models
             return default_image_cost_calculator(
