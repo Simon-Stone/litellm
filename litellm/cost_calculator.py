@@ -1415,6 +1415,7 @@ def completion_cost(
                         size=size,
                         optional_params=optional_params,
                         call_type=call_type,
+                        router_model_id=router_model_id,
                     )
                 elif call_type in _VIDEO_CALL_TYPES:
                     ### VIDEO GENERATION COST CALCULATION ###
