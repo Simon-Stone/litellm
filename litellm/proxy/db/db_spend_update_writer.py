@@ -545,6 +545,7 @@ class DBSpendUpdateWriter:
         """
         from litellm.proxy.proxy_server import (
             disable_spend_logs,
+            litellm_master_key_hash,
             litellm_proxy_budget_name,
             prisma_client,
         )
@@ -565,6 +566,14 @@ class DBSpendUpdateWriter:
             else:
                 hashed_token = token
 
+            # End-user spend is only attributed on direct master-key requests; virtual/team keys
+            # charge the key and team scopes alone.
+            is_virtual_key_request: Final = hashed_token is not None and hashed_token not in (
+                litellm_master_key_hash,
+                "litellm_proxy_master_key",
+            )
+            attributed_end_user_id: Final = None if is_virtual_key_request else end_user_id
+
             ## CREATE SPEND LOG PAYLOAD ##
             from litellm.proxy.spend_tracking.spend_tracking_utils import (
                 get_logging_payload,
@@ -584,6 +593,9 @@ class DBSpendUpdateWriter:
                 payload["startTime"] = payload["startTime"].isoformat()
             if isinstance(payload["endTime"], datetime):
                 payload["endTime"] = payload["endTime"].isoformat()
+
+            if is_virtual_key_request:
+                payload["end_user"] = ""
 
             if org_id is not None and org_id != "":
                 payload["organization_id"] = org_id
@@ -627,7 +639,7 @@ class DBSpendUpdateWriter:
                     team_id=team_id,
                     org_id=org_id,
                     project_id=project_id,
-                    end_user_id=end_user_id,
+                    end_user_id=attributed_end_user_id,
                     prisma_client=prisma_client,
                     litellm_proxy_budget_name=litellm_proxy_budget_name,
                     payload=payload,

@@ -519,7 +519,6 @@ class _ProxyDBLogger(CustomLogger):
             )
             parent_otel_span: Final = get_parent_otel_span_from_kwargs(kwargs=kwargs)
             litellm_params: Final = kwargs.get("litellm_params", {}) or {}
-            end_user_id: Final = get_end_user_id_for_cost_tracking(litellm_params)
             metadata = get_litellm_metadata_from_kwargs(kwargs=kwargs)
             # Only fetch key details when user_id wasn't already populated (e.g. direct MCP REST calls).
             # Avoids a cache/DB lookup on every normal LLM request.
@@ -583,6 +582,18 @@ class _ProxyDBLogger(CustomLogger):
 
             if response_cost is not None:
                 user_api_key: Final = metadata.get("user_api_key", None)
+                from litellm.proxy.proxy_server import litellm_master_key_hash
+
+                # End-user spend is only attributed on direct master-key requests; virtual/team keys
+                # charge the key and team scopes alone.
+                is_virtual_key_request: Final = user_api_key is not None and user_api_key not in (
+                    litellm_master_key_hash,
+                    "litellm_proxy_master_key",
+                )
+                end_user_id: Final = (
+                    None if is_virtual_key_request else get_end_user_id_for_cost_tracking(litellm_params)
+                )
+
                 verbose_proxy_logger.debug(
                     "user_api_key %s, user_id %s, team_id %s, end_user_id %s",
                     user_api_key,
