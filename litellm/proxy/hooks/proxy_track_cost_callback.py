@@ -237,7 +237,7 @@ class _ProxyDBLogger(CustomLogger):
             )
             parent_otel_span: Final = _get_parent_otel_span_from_kwargs(kwargs=kwargs)
             litellm_params: Final = kwargs.get("litellm_params", {}) or {}
-            end_user_id: Final = get_end_user_id_for_cost_tracking(litellm_params)
+            end_user_id = get_end_user_id_for_cost_tracking(litellm_params)
             metadata = get_litellm_metadata_from_kwargs(kwargs=kwargs)
             # Only fetch key details when user_id wasn't already populated (e.g. direct MCP REST calls).
             # Avoids a cache/DB lookup on every normal LLM request.
@@ -269,6 +269,22 @@ class _ProxyDBLogger(CustomLogger):
 
             if response_cost is not None:
                 user_api_key: Final = metadata.get("user_api_key", None)
+
+                ## SKIP END-USER SPEND TRACKING FOR VIRTUAL/TEAM KEYS ##
+                # When a virtual/team key (not the master key) is used, we must NOT
+                # increment the end user's spend tables. The key and team spend tables
+                # are what matter in that context. End-user spend is only tracked when
+                # the master key is used directly.
+                from litellm.proxy.proxy_server import litellm_master_key_hash
+
+                _is_virtual_key_request = (
+                    user_api_key is not None
+                    and user_api_key != litellm_master_key_hash
+                    and user_api_key != "litellm_proxy_master_key"
+                )
+                if _is_virtual_key_request:
+                    end_user_id = None
+
                 verbose_proxy_logger.debug(
                     "user_api_key %s, user_id %s, team_id %s, end_user_id %s",
                     user_api_key,

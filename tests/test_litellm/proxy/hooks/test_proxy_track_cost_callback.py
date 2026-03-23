@@ -1,4 +1,5 @@
 
+import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -2036,3 +2037,301 @@ async def test_spend_counters_keep_every_granted_group_when_the_deployment_is_un
     )
 
     assert charged == ("premium", "tier0")
+
+
+# ---------------------------------------------------------------------------
+# Virtual-key end-user spend suppression (adapted from c95857692d)
+# ---------------------------------------------------------------------------
+
+MASTER_KEY_HASH = "hashed-master-key-abc123"
+VIRTUAL_KEY_HASH = "hashed-virtual-key-xyz789"
+END_USER_ID = "alice"
+
+
+def _make_kwargs_with_end_user(
+    user_api_key: str | None,
+    end_user_id: str = END_USER_ID,
+    response_cost: float = 0.05,
+) -> dict:
+    """
+    Build a minimal kwargs dict that _PROXY_track_cost_callback expects.
+    The standard_logging_object carries response_cost.
+    litellm_params.metadata carries user_api_key and end_user_id (via user param).
+    """
+    return {
+        "litellm_params": {
+            "metadata": {
+                "user_api_key": user_api_key,
+                "user_api_key_user_id": "user-123",
+                "user_api_key_team_id": "team-abc",
+                "user_api_key_org_id": None,
+                "user_api_key_alias": None,
+                "user_api_end_user_max_budget": None,
+            },
+        },
+        "standard_logging_object": {
+            "response_cost": response_cost,
+            "response_cost_failure_debug_info": None,
+            "request_tags": [],
+        },
+        "cache_hit": False,
+        "stream": False,
+        "model": "gpt-4",
+    }
+
+
+async def _flush_created_tasks() -> None:
+    """Await fire-and-forget tasks (e.g. the update_cache create_task) before asserting."""
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+def _track_cost_callback_patches(master_key_hash: str = MASTER_KEY_HASH) -> list:
+    return [
+        patch("litellm.proxy.proxy_server.litellm_master_key_hash", master_key_hash),
+        patch("litellm.proxy.proxy_server.proxy_logging_obj"),
+        patch("litellm.proxy.proxy_server.update_cache", new_callable=AsyncMock),
+        patch("litellm.proxy.proxy_server.increment_spend_counters", new_callable=AsyncMock),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_virtual_key_suppresses_end_user_id_in_update_cache():
+    """
+    When a virtual/team key is used, update_cache() should be called with
+    end_user_id=None so that _update_end_user_cache() does NOT inflate the
+    cached end-user spend object and trigger a false BudgetExceededError.
+    """
+    logger = _ProxyDBLogger()
+    kwargs = _make_kwargs_with_end_user(user_api_key=VIRTUAL_KEY_HASH)
+
+    with patch(
+        "litellm.proxy.proxy_server.litellm_master_key_hash",
+        MASTER_KEY_HASH,
+    ), patch(
+        "litellm.proxy.proxy_server.proxy_logging_obj",
+    ) as mock_proxy_logging, patch(
+        "litellm.proxy.proxy_server.update_cache",
+        new_callable=AsyncMock,
+    ) as mock_update_cache, patch(
+        "litellm.proxy.proxy_server.increment_spend_counters",
+        new_callable=AsyncMock,
+    ), patch(
+        "litellm.proxy.hooks.proxy_track_cost_callback.get_end_user_id_for_cost_tracking",
+        return_value=END_USER_ID,
+    ):
+        mock_proxy_logging.db_spend_update_writer = MagicMock()
+        mock_proxy_logging.db_spend_update_writer.update_database = AsyncMock()
+        mock_proxy_logging.slack_alerting_instance = MagicMock()
+        mock_proxy_logging.slack_alerting_instance.customer_spend_alert = AsyncMock()
+
+        await logger._PROXY_track_cost_callback(
+            kwargs=kwargs,
+            completion_response=MagicMock(),
+            start_time=datetime.now(),
+            end_time=datetime.now(),
+        )
+        await _flush_created_tasks()
+
+        mock_update_cache.assert_called_once()
+        call_kwargs = mock_update_cache.call_args.kwargs
+        assert call_kwargs["end_user_id"] is None, (
+            f"Expected end_user_id=None in update_cache for virtual key, "
+            f"got {call_kwargs['end_user_id']!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_master_key_preserves_end_user_id_in_update_cache():
+    """
+    When the master key is used, update_cache() should be called with the
+    original end_user_id so that _update_end_user_cache() correctly tracks
+    end-user spend.
+    """
+    logger = _ProxyDBLogger()
+    kwargs = _make_kwargs_with_end_user(user_api_key=MASTER_KEY_HASH)
+
+    with patch(
+        "litellm.proxy.proxy_server.litellm_master_key_hash",
+        MASTER_KEY_HASH,
+    ), patch(
+        "litellm.proxy.proxy_server.proxy_logging_obj",
+    ) as mock_proxy_logging, patch(
+        "litellm.proxy.proxy_server.update_cache",
+        new_callable=AsyncMock,
+    ) as mock_update_cache, patch(
+        "litellm.proxy.proxy_server.increment_spend_counters",
+        new_callable=AsyncMock,
+    ), patch(
+        "litellm.proxy.hooks.proxy_track_cost_callback.get_end_user_id_for_cost_tracking",
+        return_value=END_USER_ID,
+    ):
+        mock_proxy_logging.db_spend_update_writer = MagicMock()
+        mock_proxy_logging.db_spend_update_writer.update_database = AsyncMock()
+        mock_proxy_logging.slack_alerting_instance = MagicMock()
+        mock_proxy_logging.slack_alerting_instance.customer_spend_alert = AsyncMock()
+
+        await logger._PROXY_track_cost_callback(
+            kwargs=kwargs,
+            completion_response=MagicMock(),
+            start_time=datetime.now(),
+            end_time=datetime.now(),
+        )
+        await _flush_created_tasks()
+
+        mock_update_cache.assert_called_once()
+        call_kwargs = mock_update_cache.call_args.kwargs
+        assert call_kwargs["end_user_id"] == END_USER_ID, (
+            f"Expected end_user_id={END_USER_ID!r} in update_cache for master key, "
+            f"got {call_kwargs['end_user_id']!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_virtual_key_suppresses_end_user_id_in_update_database_via_callback():
+    """
+    When a virtual/team key is used, update_database() should also be called
+    with end_user_id=None (defense-in-depth alongside the db_spend_update_writer fix).
+    """
+    logger = _ProxyDBLogger()
+    kwargs = _make_kwargs_with_end_user(user_api_key=VIRTUAL_KEY_HASH)
+
+    with patch(
+        "litellm.proxy.proxy_server.litellm_master_key_hash",
+        MASTER_KEY_HASH,
+    ), patch(
+        "litellm.proxy.proxy_server.proxy_logging_obj",
+    ) as mock_proxy_logging, patch(
+        "litellm.proxy.proxy_server.update_cache",
+        new_callable=AsyncMock,
+    ), patch(
+        "litellm.proxy.proxy_server.increment_spend_counters",
+        new_callable=AsyncMock,
+    ), patch(
+        "litellm.proxy.hooks.proxy_track_cost_callback.get_end_user_id_for_cost_tracking",
+        return_value=END_USER_ID,
+    ):
+        mock_update_database = AsyncMock()
+        mock_proxy_logging.db_spend_update_writer = MagicMock()
+        mock_proxy_logging.db_spend_update_writer.update_database = mock_update_database
+        mock_proxy_logging.slack_alerting_instance = MagicMock()
+        mock_proxy_logging.slack_alerting_instance.customer_spend_alert = AsyncMock()
+
+        await logger._PROXY_track_cost_callback(
+            kwargs=kwargs,
+            completion_response=MagicMock(),
+            start_time=datetime.now(),
+            end_time=datetime.now(),
+        )
+        await _flush_created_tasks()
+
+        mock_update_database.assert_called_once()
+        call_kwargs = mock_update_database.call_args.kwargs
+        assert call_kwargs["end_user_id"] is None, (
+            f"Expected end_user_id=None in update_database for virtual key, "
+            f"got {call_kwargs['end_user_id']!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_no_api_key_preserves_end_user_id_in_update_cache():
+    """
+    When user_api_key is None (open proxy / no-auth setup), the virtual-key guard
+    must not fire. update_cache() should receive the original end_user_id.
+    """
+    logger = _ProxyDBLogger()
+    kwargs = _make_kwargs_with_end_user(user_api_key=None)
+
+    with patch(
+        "litellm.proxy.proxy_server.litellm_master_key_hash",
+        MASTER_KEY_HASH,
+    ), patch(
+        "litellm.proxy.proxy_server.proxy_logging_obj",
+    ) as mock_proxy_logging, patch(
+        "litellm.proxy.proxy_server.update_cache",
+        new_callable=AsyncMock,
+    ) as mock_update_cache, patch(
+        "litellm.proxy.proxy_server.increment_spend_counters",
+        new_callable=AsyncMock,
+    ), patch(
+        "litellm.proxy.hooks.proxy_track_cost_callback.get_end_user_id_for_cost_tracking",
+        return_value=END_USER_ID,
+    ):
+        mock_proxy_logging.db_spend_update_writer = MagicMock()
+        mock_proxy_logging.db_spend_update_writer.update_database = AsyncMock()
+        mock_proxy_logging.slack_alerting_instance = MagicMock()
+        mock_proxy_logging.slack_alerting_instance.customer_spend_alert = AsyncMock()
+
+        await logger._PROXY_track_cost_callback(
+            kwargs=kwargs,
+            completion_response=MagicMock(),
+            start_time=datetime.now(),
+            end_time=datetime.now(),
+        )
+        await _flush_created_tasks()
+
+        # When there is no API key, update_cache is still called
+        # (via _should_track_cost_callback returning True for end_user_id).
+        # The end_user_id must be preserved.
+        if mock_update_cache.called:
+            call_kwargs = mock_update_cache.call_args.kwargs
+            assert call_kwargs["end_user_id"] == END_USER_ID, (
+                f"Expected end_user_id={END_USER_ID!r} when no API key, "
+                f"got {call_kwargs['end_user_id']!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_virtual_key_team_and_user_spend_still_tracked():
+    """
+    Suppressing end-user spend for a virtual key must NOT prevent key-level
+    and team-level spend from being tracked. update_cache() must still be
+    called with the original token and team_id.
+    """
+    logger = _ProxyDBLogger()
+    kwargs = _make_kwargs_with_end_user(user_api_key=VIRTUAL_KEY_HASH)
+
+    with patch(
+        "litellm.proxy.proxy_server.litellm_master_key_hash",
+        MASTER_KEY_HASH,
+    ), patch(
+        "litellm.proxy.proxy_server.proxy_logging_obj",
+    ) as mock_proxy_logging, patch(
+        "litellm.proxy.proxy_server.update_cache",
+        new_callable=AsyncMock,
+    ) as mock_update_cache, patch(
+        "litellm.proxy.proxy_server.increment_spend_counters",
+        new_callable=AsyncMock,
+    ), patch(
+        "litellm.proxy.hooks.proxy_track_cost_callback.get_end_user_id_for_cost_tracking",
+        return_value=END_USER_ID,
+    ):
+        mock_proxy_logging.db_spend_update_writer = MagicMock()
+        mock_proxy_logging.db_spend_update_writer.update_database = AsyncMock()
+        mock_proxy_logging.slack_alerting_instance = MagicMock()
+        mock_proxy_logging.slack_alerting_instance.customer_spend_alert = AsyncMock()
+
+        await logger._PROXY_track_cost_callback(
+            kwargs=kwargs,
+            completion_response=MagicMock(),
+            start_time=datetime.now(),
+            end_time=datetime.now(),
+        )
+        await _flush_created_tasks()
+
+        mock_update_cache.assert_called_once()
+        call_kwargs = mock_update_cache.call_args.kwargs
+        # Key-level spend must still be tracked
+        assert (
+            call_kwargs["token"] == VIRTUAL_KEY_HASH
+        ), f"Expected token={VIRTUAL_KEY_HASH!r} in update_cache, got {call_kwargs['token']!r}"
+        # Team-level spend must still be tracked
+        assert (
+            call_kwargs["team_id"] == "team-abc"
+        ), f"Expected team_id='team-abc' in update_cache, got {call_kwargs['team_id']!r}"
+        # End-user spend must be suppressed
+        assert call_kwargs["end_user_id"] is None, (
+            f"Expected end_user_id=None in update_cache for virtual key, "
+            f"got {call_kwargs['end_user_id']!r}"
+        )
