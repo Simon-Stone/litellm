@@ -223,6 +223,22 @@ class _ProxyDBLogger(CustomLogger):
 
             if response_cost is not None:
                 user_api_key = metadata.get("user_api_key", None)
+
+                ## SKIP END-USER SPEND TRACKING FOR VIRTUAL/TEAM KEYS ##
+                # When a virtual/team key (not the master key) is used, we must NOT
+                # increment the end user's spend tables. The key and team spend tables
+                # are what matter in that context. End-user spend is only tracked when
+                # the master key is used directly.
+                from litellm.proxy.proxy_server import litellm_master_key_hash
+
+                _is_virtual_key_request = (
+                    user_api_key is not None
+                    and user_api_key != litellm_master_key_hash
+                    and user_api_key != "litellm_proxy_master_key"
+                )
+                if _is_virtual_key_request:
+                    end_user_id = None
+
                 if kwargs.get("cache_hit", False) is True:
                     response_cost = 0.0
                     verbose_proxy_logger.debug(
