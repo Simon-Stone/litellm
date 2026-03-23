@@ -91,6 +91,7 @@ class DBSpendUpdateWriter:
     ):
         from litellm.proxy.proxy_server import (
             disable_spend_logs,
+            litellm_master_key_hash,
             litellm_proxy_budget_name,
             prisma_client,
             user_api_key_cache,
@@ -108,6 +109,19 @@ class DBSpendUpdateWriter:
             else:
                 hashed_token = token
 
+            ## SKIP END-USER SPEND TRACKING FOR VIRTUAL/TEAM KEYS ##
+            # When a virtual/team key (not the master key) is used, we must NOT
+            # increment the end user's spend tables. The key and team spend tables
+            # are what matter in that context. End-user spend is only tracked when
+            # the master key is used directly.
+            _is_virtual_key_request = (
+                hashed_token is not None
+                and hashed_token != litellm_master_key_hash
+                and hashed_token != "litellm_proxy_master_key"
+            )
+            if _is_virtual_key_request:
+                end_user_id = None
+
             ## CREATE SPEND LOG PAYLOAD ##
             from litellm.proxy.spend_tracking.spend_tracking_utils import (
                 get_logging_payload,
@@ -124,7 +138,12 @@ class DBSpendUpdateWriter:
                 payload["startTime"] = payload["startTime"].isoformat()
             if isinstance(payload["endTime"], datetime):
                 payload["endTime"] = payload["endTime"].isoformat()
-            
+
+            # Suppress end-user attribution in the spend log payload for virtual keys
+            # so that LiteLLM_DailyEndUserSpend is also not updated.
+            if _is_virtual_key_request:
+                payload["end_user"] = ""
+
             if org_id is not None and org_id != "":
                 payload["organization_id"] = org_id
 
@@ -933,7 +952,7 @@ class DBSpendUpdateWriter:
                 team_id = key.split("::")[1]
                 user_id = key.split("::")[3]
                 team_memberships_to_invalidate.append((user_id, team_id))
-            
+
             for i in range(n_retry_times + 1):
                 start_time = time.time()
                 try:
@@ -970,7 +989,7 @@ class DBSpendUpdateWriter:
                     _raise_failed_update_spend_exception(
                         e=e, start_time=start_time, proxy_logging_obj=proxy_logging_obj
                     )
-            
+
             # Invalidate cache for updated team memberships
             # This ensures budget checks read fresh spend data from the database
             if team_memberships_to_invalidate and proxy_logging_obj is not None:
@@ -1108,7 +1127,7 @@ class DBSpendUpdateWriter:
         entity_id_field: str,
         table_name: str,
         unique_constraint_name: str,
-    ) -> None: 
+    ) -> None:
         ...
 
     @overload
@@ -1178,7 +1197,7 @@ class DBSpendUpdateWriter:
         entity_id_field: str,
         table_name: str,
         unique_constraint_name: str,
-    ) -> None: 
+    ) -> None:
         ...
     # fmt: on
 
@@ -1591,7 +1610,7 @@ class DBSpendUpdateWriter:
             endpoint = None
             if call_type:
                 endpoint = ROUTE_ENDPOINT_MAPPING.get(call_type, None)
-            
+
             daily_transaction = BaseDailySpendTransaction(
                 date=date,
                 api_key=payload["api_key"],

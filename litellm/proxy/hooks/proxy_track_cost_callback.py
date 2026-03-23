@@ -129,7 +129,11 @@ class _ProxyDBLogger(CustomLogger):
         start_time=None,
         end_time=None,  # start/end time for completion
     ):
-        from litellm.proxy.proxy_server import proxy_logging_obj, update_cache
+        from litellm.proxy.proxy_server import (
+            litellm_master_key_hash,
+            proxy_logging_obj,
+            update_cache,
+        )
 
         verbose_proxy_logger.debug("INSIDE _PROXY_track_cost_callback")
         try:
@@ -164,6 +168,21 @@ class _ProxyDBLogger(CustomLogger):
                     verbose_proxy_logger.debug(
                         f"Cache Hit: response_cost {response_cost}, for user_id {user_id}"
                     )
+
+                ## SKIP END-USER SPEND TRACKING FOR VIRTUAL/TEAM KEYS ##
+                # When a virtual/team key (not the master key) is used, we must NOT
+                # increment end-user spend in the cache or DB. End-user spend is only
+                # tracked when the master key is used directly. Without this guard,
+                # the cached end-user spend object inflates and triggers a false
+                # BudgetExceededError on subsequent requests that share the same
+                # end_user_id with the same team key.
+                _is_virtual_key_request = (
+                    user_api_key is not None
+                    and user_api_key != litellm_master_key_hash
+                    and user_api_key != "litellm_proxy_master_key"
+                )
+                if _is_virtual_key_request:
+                    end_user_id = None
 
                 verbose_proxy_logger.debug(
                     f"user_api_key {user_api_key}, user_id {user_id}, team_id {team_id}, end_user_id {end_user_id}"
