@@ -13,6 +13,7 @@ from litellm.llms.openai.chat.gpt_transformation import (
     OpenAIChatCompletionStreamingHandler,
     OpenAIGPTConfig,
 )
+from litellm.llms.openai.openai import OpenAIChatCompletionResponseIterator
 from litellm.llms.openai.chat.gpt_5_transformation import OpenAIGPT5Config
 
 
@@ -208,10 +209,10 @@ class TestOpenAIChatCompletionStreamingHandler:
     def test_chunk_parser_maps_reasoning_to_reasoning_content(self):
         """
         Test that chunk_parser maps 'reasoning' field to 'reasoning_content'.
-        
+
         Some OpenAI-compatible providers (e.g., GLM-5, hosted_vllm) return
         delta.reasoning, but LiteLLM expects delta.reasoning_content.
-        
+
         Regression test for: Streaming responses with delta.reasoning field
         coming back empty when using openai/ or hosted_vllm/ providers.
         """
@@ -337,14 +338,14 @@ class TestGPT5ReasoningEffortPreservation:
         """Test that reasoning_effort as string is preserved."""
         non_default_params = {"reasoning_effort": "high"}
         optional_params = {}
-        
+
         self.config.map_openai_params(
             non_default_params=non_default_params,
             optional_params=optional_params,
             model="gpt-5.4",
             drop_params=False,
         )
-        
+
         # String format should be preserved
         assert non_default_params.get("reasoning_effort") == "high"
 
@@ -352,34 +353,34 @@ class TestGPT5ReasoningEffortPreservation:
         """Test that reasoning_effort dict with only 'effort' key is normalized to string."""
         non_default_params = {"reasoning_effort": {"effort": "high"}}
         optional_params = {}
-        
+
         self.config.map_openai_params(
             non_default_params=non_default_params,
             optional_params=optional_params,
             model="gpt-5.4",
             drop_params=False,
         )
-        
+
         # Dict with only 'effort' should be normalized to string
         assert non_default_params.get("reasoning_effort") == "high"
 
     def test_reasoning_effort_dict_with_summary_preserved(self):
         """Test that reasoning_effort dict with 'summary' field is preserved for Responses API.
-        
+
         Regression test for: User reported that summary field was being dropped when
         routing to Responses API. The dict format with additional fields should be
         preserved so it can be properly handled by the Responses API transformation.
         """
         non_default_params = {"reasoning_effort": {"effort": "high", "summary": "detailed"}}
         optional_params = {}
-        
+
         self.config.map_openai_params(
             non_default_params=non_default_params,
             optional_params=optional_params,
             model="gpt-5.4",
             drop_params=False,
         )
-        
+
         # Dict with additional fields should be preserved
         assert non_default_params.get("reasoning_effort") == {"effort": "high", "summary": "detailed"}
         assert isinstance(non_default_params.get("reasoning_effort"), dict)
@@ -390,14 +391,14 @@ class TestGPT5ReasoningEffortPreservation:
         """Test that reasoning_effort dict with 'generate_summary' field is preserved."""
         non_default_params = {"reasoning_effort": {"effort": "medium", "generate_summary": "auto"}}
         optional_params = {}
-        
+
         self.config.map_openai_params(
             non_default_params=non_default_params,
             optional_params=optional_params,
             model="gpt-5.4",
             drop_params=False,
         )
-        
+
         # Dict with additional fields should be preserved
         assert non_default_params.get("reasoning_effort") == {"effort": "medium", "generate_summary": "auto"}
         assert isinstance(non_default_params.get("reasoning_effort"), dict)
@@ -412,14 +413,14 @@ class TestGPT5ReasoningEffortPreservation:
             }
         }
         optional_params = {}
-        
+
         self.config.map_openai_params(
             non_default_params=non_default_params,
             optional_params=optional_params,
             model="gpt-5.4",
             drop_params=False,
         )
-        
+
         # Dict with all fields should be preserved
         reasoning = non_default_params.get("reasoning_effort")
         assert isinstance(reasoning, dict)
@@ -429,7 +430,7 @@ class TestGPT5ReasoningEffortPreservation:
 
     def test_reasoning_effort_dict_xhigh_triggers_validation(self):
         """xhigh-dict: effective effort is extracted for model-support validation.
-        
+
         When reasoning_effort={"effort": "xhigh", "summary": "detailed"} is passed to a model
         that doesn't support xhigh (e.g. gpt-5.1), the xhigh guard must fire.
         """
@@ -462,7 +463,7 @@ class TestGPT5ReasoningEffortPreservation:
 
     def test_reasoning_effort_dict_none_treated_as_none_for_tools(self):
         """none-dict: {"effort": "none", "summary": "detailed"} is treated as effort=none.
-        
+
         Tool-drop guard should NOT fire; reasoning_effort should be kept.
         """
         tools = [{"type": "function", "function": {"name": "test", "description": "test"}}]
@@ -481,7 +482,7 @@ class TestGPT5ReasoningEffortPreservation:
 
     def test_reasoning_effort_dict_none_treated_as_none_for_sampling(self):
         """none-dict: {"effort": "none", "summary": "detailed"} allows logprobs/top_p.
-        
+
         Sampling-param guard should NOT fire; logprobs should be kept.
         """
         non_default_params = {
@@ -517,3 +518,144 @@ class TestGPT5ReasoningEffortPreservation:
 
         assert optional_params.get("temperature") == 0.5
         assert non_default_params.get("reasoning_effort") == {"effort": "none", "summary": "detailed"}
+
+
+class TestOpenAIChatCompletionResponseIterator:
+    """Tests for OpenAIChatCompletionResponseIterator.chunk_parser()
+
+    This iterator is used in the passthrough logging handler to parse
+    streaming chunks for cost tracking and logging.
+
+    Regression tests for: https://github.com/BerriAI/litellm/issues/20246
+    """
+
+    def test_should_map_reasoning_to_reasoning_content(self):
+        """
+        Test that chunk_parser maps 'reasoning' field to 'reasoning_content'.
+
+        VLLM and SGLang return delta.reasoning, but LiteLLM expects
+        delta.reasoning_content. The passthrough logging handler uses this
+        iterator to rebuild complete responses from streaming chunks.
+        """
+        iterator = OpenAIChatCompletionResponseIterator(
+            streaming_response=None, sync_stream=True
+        )
+
+        chunk = {
+            "id": "chatcmpl-vllm-123",
+            "object": "chat.completion.chunk",
+            "created": 1771411455,
+            "model": "Qwen/Qwen3.5-9B",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "reasoning": "Let me think about this...",
+                        "role": "assistant",
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        }
+
+        result = iterator.chunk_parser(chunk)
+
+        assert result.choices[0].delta.reasoning_content == "Let me think about this..."
+
+    def test_should_not_overwrite_existing_reasoning_content(self):
+        """
+        Test that 'reasoning' does NOT overwrite existing 'reasoning_content'.
+
+        If a provider sends both fields, the explicit reasoning_content
+        should take precedence.
+        """
+        iterator = OpenAIChatCompletionResponseIterator(
+            streaming_response=None, sync_stream=True
+        )
+
+        chunk = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1771411455,
+            "model": "some-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "reasoning": "from reasoning field",
+                        "reasoning_content": "from reasoning_content field",
+                        "role": "assistant",
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        }
+
+        result = iterator.chunk_parser(chunk)
+
+        # reasoning_content should be preserved, not overwritten
+        assert (
+            result.choices[0].delta.reasoning_content == "from reasoning_content field"
+        )
+
+    def test_should_handle_chunks_without_reasoning(self):
+        """
+        Test that chunks without reasoning fields work correctly.
+        """
+        iterator = OpenAIChatCompletionResponseIterator(
+            streaming_response=None, sync_stream=True
+        )
+
+        chunk = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1771411455,
+            "model": "gpt-4o",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "content": "Hello!",
+                        "role": "assistant",
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        }
+
+        result = iterator.chunk_parser(chunk)
+
+        assert result.choices[0].delta.content == "Hello!"
+        assert not hasattr(result.choices[0].delta, "reasoning_content")
+
+    def test_should_handle_vllm_reasoning_only_chunk(self):
+        """
+        Test parsing a chunk that has only reasoning content and no text content.
+
+        This is the typical pattern from VLLM during the thinking phase:
+        the delta contains only 'reasoning' with no 'content'.
+        """
+        iterator = OpenAIChatCompletionResponseIterator(
+            streaming_response=None, sync_stream=True
+        )
+
+        chunk = {
+            "id": "chatcmpl-vllm-456",
+            "object": "chat.completion.chunk",
+            "created": 1771411455,
+            "model": "Qwen/Qwen3.5-9B",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "reasoning": "Step 1: Calculate 1+1",
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        }
+
+        result = iterator.chunk_parser(chunk)
+
+        assert result.choices[0].delta.reasoning_content == "Step 1: Calculate 1+1"
+        assert result.choices[0].delta.content is None

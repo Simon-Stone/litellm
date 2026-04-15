@@ -257,3 +257,81 @@ def test_hosted_vllm_thinking_blocks_with_list_content():
     }
     assert assistant_msg["content"][2] == {"type": "text", "text": "Response text"}
     assert "thinking_blocks" not in assistant_msg
+
+
+def test_hosted_vllm_streaming_maps_reasoning_to_reasoning_content():
+    """
+    Test that hosted_vllm streaming correctly maps VLLM's 'reasoning' field
+    to LiteLLM's 'reasoning_content' field via the inherited
+    OpenAIChatCompletionStreamingHandler.
+
+    Regression test for: https://github.com/BerriAI/litellm/issues/20246
+
+    VLLM returns delta.reasoning in streaming responses, but LiteLLM
+    expects delta.reasoning_content.
+    """
+    config = HostedVLLMChatConfig()
+    iterator = config.get_model_response_iterator(
+        streaming_response=None,
+        sync_stream=True,
+    )
+
+    # Simulate a VLLM streaming chunk with 'reasoning' field
+    vllm_chunk = {
+        "id": "chatcmpl-vllm-test",
+        "object": "chat.completion.chunk",
+        "created": 1771411455,
+        "model": "Qwen/Qwen3.5-9B",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "reasoning": "Let me think step by step...",
+                    "role": "assistant",
+                },
+                "finish_reason": None,
+            }
+        ],
+    }
+
+    result = iterator.chunk_parser(vllm_chunk)
+
+    # Verify that reasoning was mapped to reasoning_content
+    assert result.choices[0].delta.reasoning_content == "Let me think step by step..."
+
+
+def test_hosted_vllm_streaming_content_after_reasoning():
+    """
+    Test that hosted_vllm streaming correctly handles the transition
+    from reasoning to content chunks.
+
+    VLLM first sends chunks with 'reasoning' field, then sends chunks
+    with 'content' field.
+    """
+    config = HostedVLLMChatConfig()
+    iterator = config.get_model_response_iterator(
+        streaming_response=None,
+        sync_stream=True,
+    )
+
+    # Content chunk (after reasoning phase)
+    content_chunk = {
+        "id": "chatcmpl-vllm-test",
+        "object": "chat.completion.chunk",
+        "created": 1771411455,
+        "model": "Qwen/Qwen3.5-9B",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "content": "The answer is 2.",
+                },
+                "finish_reason": None,
+            }
+        ],
+    }
+
+    result = iterator.chunk_parser(content_chunk)
+
+    assert result.choices[0].delta.content == "The answer is 2."
+    assert not hasattr(result.choices[0].delta, "reasoning_content")
