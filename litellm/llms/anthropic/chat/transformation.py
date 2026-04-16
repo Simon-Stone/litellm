@@ -170,7 +170,7 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
 
     @staticmethod
     def _is_claude_4_6_model(model: str) -> bool:
-        """Check if the model is a Claude 4.6 model that uses adaptive thinking."""
+        """Check if the model is a Claude 4.6+ model that uses adaptive thinking."""
         model_lower = model.lower()
         return any(
             model_variant in model_lower
@@ -179,10 +179,40 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
                 "opus_4_6",
                 "opus-4.6",
                 "opus_4.6",
+                "opus-4-7",
+                "opus_4_7",
+                "opus-4.7",
+                "opus_4.7",
                 "sonnet-4-6",
                 "sonnet_4_6",
                 "sonnet-4.6",
                 "sonnet_4.6",
+                "sonnet-4-7",
+                "sonnet_4_7",
+                "sonnet-4.7",
+                "sonnet_4.7",
+            )
+        )
+
+    @staticmethod
+    def _is_claude_4_7_model(model: str) -> bool:
+        """Check if the model is a Claude 4.7+ model with breaking changes:
+        - No budget_tokens (must use adaptive thinking)
+        - No temperature/top_p/top_k
+        - Thinking display defaults to 'omitted'
+        """
+        model_lower = model.lower()
+        return any(
+            model_variant in model_lower
+            for model_variant in (
+                "opus-4-7",
+                "opus_4_7",
+                "opus-4.7",
+                "opus_4.7",
+                "sonnet-4-7",
+                "sonnet_4_7",
+                "sonnet-4.7",
+                "sonnet_4.7",
             )
         )
 
@@ -729,7 +759,12 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
     ) -> Optional[AnthropicThinkingParam]:
         if reasoning_effort is None or reasoning_effort == "none":
             return None
-        if AnthropicConfig._is_claude_4_6_model(model):
+        if AnthropicConfig._is_claude_4_7_model(model):
+            return AnthropicThinkingParam(
+                type="adaptive",
+                display="summarized",
+            )
+        elif AnthropicConfig._is_claude_4_6_model(model):
             return AnthropicThinkingParam(
                 type="adaptive",
             )
@@ -950,9 +985,11 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
                 if _value is not None:
                     optional_params["stop_sequences"] = _value
             elif param == "temperature":
-                optional_params["temperature"] = value
+                if not AnthropicConfig._is_claude_4_7_model(model):
+                    optional_params["temperature"] = value
             elif param == "top_p":
-                optional_params["top_p"] = value
+                if not AnthropicConfig._is_claude_4_7_model(model):
+                    optional_params["top_p"] = value
             elif param == "response_format" and isinstance(value, dict):
                 if any(
                     substring in model
@@ -965,10 +1002,16 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
                         "opus-4-5",
                         "opus-4.6",
                         "opus-4-6",
+                        "opus-4.7",
+                        "opus-4-7",
                         "sonnet-4.6",
                         "sonnet-4-6",
+                        "sonnet-4.7",
+                        "sonnet-4-7",
                         "sonnet_4.6",
                         "sonnet_4_6",
+                        "sonnet_4.7",
+                        "sonnet_4_7",
                     }
                 ):
                     _output_format = (
@@ -1006,6 +1049,16 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
                 optional_params["thinking"] = AnthropicConfig._map_reasoning_effort(
                     reasoning_effort=value, model=model
                 )
+                # For Claude 4.7+, reasoning_effort maps to output_config.effort
+                if AnthropicConfig._is_claude_4_7_model(model):
+                    _effort_map = {
+                        "minimal": "low",
+                        "low": "low",
+                        "medium": "medium",
+                        "high": "high",
+                    }
+                    _mapped_effort = _effort_map.get(value, "medium")
+                    optional_params["output_config"] = {"effort": _mapped_effort}
             elif param == "web_search_options" and isinstance(value, dict):
                 hosted_web_search_tool = self.map_web_search_tool(
                     cast(OpenAIWebSearchOptions, value)
