@@ -179,10 +179,18 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
                 "opus_4_6",
                 "opus-4.6",
                 "opus_4.6",
+                "opus-4-7",
+                "opus_4_7",
+                "opus-4.7",
+                "opus_4.7",
                 "sonnet-4-6",
                 "sonnet_4_6",
                 "sonnet-4.6",
                 "sonnet_4.6",
+                "sonnet-4-7",
+                "sonnet_4_7",
+                "sonnet-4.7",
+                "sonnet_4.7",
             )
         )
 
@@ -965,10 +973,16 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
                         "opus-4-5",
                         "opus-4.6",
                         "opus-4-6",
+                        "opus-4.7",
+                        "opus-4-7",
                         "sonnet-4.6",
                         "sonnet-4-6",
+                        "sonnet-4.7",
+                        "sonnet-4-7",
                         "sonnet_4.6",
                         "sonnet_4_6",
+                        "sonnet_4.7",
+                        "sonnet_4_7",
                     }
                 ):
                     _output_format = (
