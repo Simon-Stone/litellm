@@ -1344,6 +1344,7 @@ def _get_dummy_thought_signature() -> str:
 def convert_to_gemini_tool_call_invoke(
     message: ChatCompletionAssistantMessage,
     model: Optional[str] = None,
+    custom_llm_provider: Optional[str] = None,
 ) -> List[VertexPartType]:
     """
     OpenAI tool invokes:
@@ -1394,7 +1395,9 @@ def convert_to_gemini_tool_call_invoke(
         )
 
         forward_tool_call_id = bool(
-            model and VertexGeminiConfig._is_gemini_3_or_newer(model)
+            model
+            and VertexGeminiConfig._is_gemini_3_or_newer(model)
+            and custom_llm_provider == "gemini"
         )
 
         if tool_calls is not None:
@@ -1475,6 +1478,7 @@ def convert_to_gemini_tool_call_result(  # noqa: PLR0915
     message: Union[ChatCompletionToolMessage, ChatCompletionFunctionMessage],
     last_message_with_tool_calls: Optional[dict],
     model: Optional[str] = None,
+    custom_llm_provider: Optional[str] = None,
 ) -> Union[VertexPartType, List[VertexPartType]]:
     """
     OpenAI message with a tool result looks like:
@@ -1623,7 +1627,11 @@ def convert_to_gemini_tool_call_result(  # noqa: PLR0915
     )
 
     gemini_call_id: Optional[str] = None
-    if model and VertexGeminiConfig._is_gemini_3_or_newer(model):
+    if (
+        model
+        and VertexGeminiConfig._is_gemini_3_or_newer(model)
+        and custom_llm_provider == "gemini"
+    ):
         raw_tool_call_id = message.get("tool_call_id")
         if raw_tool_call_id and isinstance(raw_tool_call_id, str):
             stripped_id = raw_tool_call_id.split(THOUGHT_SIGNATURE_SEPARATOR, 1)[0]
@@ -3957,8 +3965,8 @@ def _convert_to_bedrock_tool_call_invoke(
     },
     """
     """
-    Bedrock tool invokes: 
-    [   
+    Bedrock tool invokes:
+    [
         {
             "role": "assistant",
             "toolUse": {
@@ -3971,7 +3979,7 @@ def _convert_to_bedrock_tool_call_invoke(
     """
     """
     - json.loads argument
-    - extract name 
+    - extract name
     - extract id
     """
     from litellm.litellm_core_utils.prompt_templates.common_utils import (
@@ -4069,7 +4077,7 @@ def _convert_to_bedrock_tool_call_result(
     }
     """
     """
-    Bedrock result looks like this: 
+    Bedrock result looks like this:
     {
         "role": "user",
         "content": [
@@ -4090,7 +4098,7 @@ def _convert_to_bedrock_tool_call_result(
     }
     """
     """
-    - 
+    -
     """
     tool_result_content_blocks: List[BedrockToolResultContentBlock] = []
     if isinstance(message["content"], str):
@@ -5561,8 +5569,8 @@ def default_response_schema_prompt(response_schema: dict) -> str:
 
     This is the default prompt. Allow user to override this with a custom_prompt.
     """
-    prompt_str = """Use this JSON schema: 
-    ```json 
+    prompt_str = """Use this JSON schema:
+    ```json
     {}
     ```""".format(
         response_schema
