@@ -1396,9 +1396,8 @@ def convert_to_gemini_tool_call_invoke(
 
         forward_tool_call_id = bool(
             model
-            and VertexGeminiConfig._forward_gemini_function_call_id(
-                model, custom_llm_provider
-            )
+            and VertexGeminiConfig._is_gemini_3_or_newer(model)
+            and custom_llm_provider == "gemini"
         )
 
         if tool_calls is not None:
@@ -1628,8 +1627,10 @@ def convert_to_gemini_tool_call_result(  # noqa: PLR0915
     )
 
     gemini_call_id: Optional[str] = None
-    if model and VertexGeminiConfig._forward_gemini_function_call_id(
-        model, custom_llm_provider
+    if (
+        model
+        and VertexGeminiConfig._is_gemini_3_or_newer(model)
+        and custom_llm_provider == "gemini"
     ):
         raw_tool_call_id = message.get("tool_call_id")
         if raw_tool_call_id and isinstance(raw_tool_call_id, str):
@@ -3972,8 +3973,8 @@ def _convert_to_bedrock_tool_call_invoke(
     },
     """
     """
-    Bedrock tool invokes: 
-    [   
+    Bedrock tool invokes:
+    [
         {
             "role": "assistant",
             "toolUse": {
@@ -3986,7 +3987,7 @@ def _convert_to_bedrock_tool_call_invoke(
     """
     """
     - json.loads argument
-    - extract name 
+    - extract name
     - extract id
     """
     from litellm.litellm_core_utils.prompt_templates.common_utils import (
@@ -4200,7 +4201,7 @@ def _convert_to_bedrock_tool_call_result(
     }
     """
     """
-    Bedrock result looks like this: 
+    Bedrock result looks like this:
     {
         "role": "user",
         "content": [
@@ -4221,7 +4222,7 @@ def _convert_to_bedrock_tool_call_result(
     }
     """
     """
-    - 
+    -
     """
     tool_result_content_blocks, used_search_results = (
         _build_bedrock_tool_result_content_blocks(message)
@@ -5626,8 +5627,8 @@ def default_response_schema_prompt(response_schema: dict) -> str:
 
     This is the default prompt. Allow user to override this with a custom_prompt.
     """
-    prompt_str = """Use this JSON schema: 
-    ```json 
+    prompt_str = """Use this JSON schema:
+    ```json
     {}
     ```""".format(response_schema)
     return prompt_str
