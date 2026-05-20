@@ -68,3 +68,11 @@ Before implementing:
 - If you write 200 lines and it could be 50, rewrite it.
 
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+
+
+## Dartmouth Fork
+
+This repository is a Dartmouth-maintained fork of LiteLLM, customized for our institutional deployment. We track upstream stable releases but carry local patches to better serve Dartmouth usage patterns.
+
+**Rebase workflow:** When LiteLLM publishes a new stable tag, we rebase onto it. During each rebase, carefully assess whether our local changes are still necessary — upstream may have incorporated equivalent fixes that make our patches obsolete.
