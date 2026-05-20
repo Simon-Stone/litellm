@@ -2,6 +2,12 @@
 
 This document provides comprehensive instructions for AI agents working in the LiteLLM repository.
 
+## DARTMOUTH FORK
+
+This repository is a Dartmouth-maintained fork of LiteLLM, customized for our institutional deployment. We track upstream stable releases but carry local patches to better serve Dartmouth usage patterns.
+
+**Rebase workflow:** When LiteLLM publishes a new stable tag, we rebase onto it. During each rebase, carefully assess whether our local changes are still necessary — upstream may have incorporated equivalent fixes that make our patches obsolete. When making changes, consider whether a patch is Dartmouth-specific or could be contributed upstream.
+
 ## OVERVIEW
 
 LiteLLM is a unified interface for 100+ LLMs that:
@@ -39,7 +45,7 @@ Documentation lives in the separate [BerriAI/litellm-docs](https://github.com/Be
    - Handle streaming responses appropriately
    - Include proper error handling with provider-specific exceptions
 
-2. **Type Safety**: 
+2. **Type Safety**:
    - Use proper type hints throughout
    - Update type definitions in `litellm/types/`
    - Ensure compatibility with both Pydantic v1 and v2
