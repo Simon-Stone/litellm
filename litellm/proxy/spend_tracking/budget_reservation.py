@@ -330,13 +330,31 @@ async def _get_end_user_budget_counter(
         return None
 
     source_cache_key = f"end_user_id:{end_user_id}"
-    max_budget = _to_float(valid_token.end_user_max_budget)
+    token_max_budget = _to_float(valid_token.end_user_max_budget)
+    max_budget = token_max_budget
     fallback_spend = 0.0
+    eu_obj_budget_id = None
+    eu_obj_budget_table_max = None
     if end_user_object is not None:
         fallback_spend = _to_float(_get_value(end_user_object, "spend")) or 0.0
+        eu_obj_budget_id = _get_value(end_user_object, "budget_id")
+        budget_table = _get_value(end_user_object, "litellm_budget_table")
+        eu_obj_budget_table_max = _to_float(_get_value(budget_table, "max_budget"))
         if max_budget is None:
-            budget_table = _get_value(end_user_object, "litellm_budget_table")
-            max_budget = _to_float(_get_value(budget_table, "max_budget"))
+            max_budget = eu_obj_budget_table_max
+
+    # [DEBUG-eubud2] Diagnose which candidate produced the effective max_budget.
+    verbose_proxy_logger.warning(
+        "[DEBUG-eubud2] end_user_id=%s token.end_user_max_budget=%s "
+        "end_user_object.budget_id=%s end_user_object.litellm_budget_table.max_budget=%s "
+        "effective_max_budget=%s end_user_object_present=%s",
+        end_user_id,
+        token_max_budget,
+        eu_obj_budget_id,
+        eu_obj_budget_table_max,
+        max_budget,
+        end_user_object is not None,
+    )
 
     if max_budget is None or max_budget <= 0:
         return None

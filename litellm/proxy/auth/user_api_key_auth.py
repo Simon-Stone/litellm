@@ -2452,6 +2452,12 @@ async def _run_post_custom_auth_checks(
     )
 
     # 1. Look up end_user object from DB if end_user_id is set
+    # [DEBUG-eubud3] State of valid_token BEFORE end-user re-lookup in centralized checks.
+    verbose_proxy_logger.warning(
+        "[DEBUG-eubud3] PRE_LOOKUP valid_token.end_user_id=%s valid_token.end_user_max_budget=%s",
+        valid_token.end_user_id,
+        valid_token.end_user_max_budget,
+    )
     end_user_object = None
     if valid_token.end_user_id is not None:
         valid_token, end_user_object = await _lookup_end_user_and_apply_budget(

@@ -2629,6 +2629,17 @@ class LiteLLM_VerificationTokenView(LiteLLM_VerificationToken):
     last_refreshed_at: Optional[float] = None  # last time joint view was pulled from db
 
     def __init__(self, **kwargs):
+        # [DEBUG-eubud4] Log when end_user_max_budget is being set at construction time
+        if kwargs.get("end_user_max_budget") is not None:
+            import traceback
+            from litellm._logging import verbose_proxy_logger
+
+            verbose_proxy_logger.warning(
+                "[DEBUG-eubud4] LiteLLM_VerificationTokenView.__init__ end_user_max_budget=%s kwargs_keys=%s stack=%s",
+                kwargs.get("end_user_max_budget"),
+                sorted(kwargs.keys()),
+                "".join(traceback.format_stack(limit=8)),
+            )
         # Handle litellm_budget_table_* keys (budget table overrides when key value is None or empty)
         for key, value in list(kwargs.items()):
             if key.startswith("litellm_budget_table_") and value is not None:
