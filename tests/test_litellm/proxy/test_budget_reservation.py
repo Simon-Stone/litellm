@@ -1696,3 +1696,132 @@ async def test_should_not_block_concurrent_team_request_when_first_request_lacks
         await release_budget_reservation(first_reservation)
     if second_reservation is not None:
         await release_budget_reservation(second_reservation)
+
+
+# ---------------------------------------------------------------------------
+# Pre-call symmetric counterpart of 377608b6de "don't increase end user spend
+# when team key is used". The post-call writers in db_spend_update_writer.py
+# and proxy_track_cost_callback.py wipe end_user_id when the request came from
+# a virtual/team key. The pre-call budget reservation path must apply the same
+# contract: when a virtual/team key is used, the end-user's budget reservation
+# must NOT be enforced, regardless of whether ``user=<end_user_id>`` was set
+# in the request body. Otherwise an end-user's small per-customer budget can
+# block requests routed through a team key with a much larger team budget.
+# ---------------------------------------------------------------------------
+
+
+MASTER_KEY_HASH_FOR_RESERVATION_TESTS = "hashed-master-key-for-reservation"
+VIRTUAL_KEY_HASH_FOR_RESERVATION_TESTS = "hashed-virtual-key-for-reservation"
+
+
+@pytest.mark.asyncio
+async def test_should_skip_end_user_budget_reservation_when_virtual_key_is_used(
+    spend_counter_state,
+):
+    """Virtual/team-key request with ``user=<end_user_id>`` in the body must
+    NOT have the end-user's budget reservation applied. Mirrors the
+    post-call ``_is_virtual_key_request`` guard so the pre-call and post-call
+    sides of end-user spend tracking are consistent.
+    """
+    counter_cache, key_cache = spend_counter_state
+    proxy_logging_obj = ProxyLogging(user_api_key_cache=key_cache)
+    valid_token = UserAPIKeyAuth(
+        token=VIRTUAL_KEY_HASH_FOR_RESERVATION_TESTS,
+        team_id="team-shared",
+    )
+    end_user_object = LiteLLM_EndUserTable(
+        user_id="alice",
+        blocked=False,
+        spend=1.9,
+        litellm_budget_table=LiteLLM_BudgetTable(max_budget=2.0),
+    )
+
+    with (
+        patch(
+            "litellm.proxy.proxy_server.litellm_master_key_hash",
+            MASTER_KEY_HASH_FOR_RESERVATION_TESTS,
+        ),
+        patch(
+            "litellm.proxy.spend_tracking.budget_reservation.estimate_request_max_cost",
+            return_value=0.3,  # would push spend over alice's max_budget=2.0
+        ),
+    ):
+        # Without the guard, this raises BudgetExceededError (1.9 + 0.3 > 2.0)
+        # against alice's per-end-user budget, even though the request is from
+        # a team key whose own budget has plenty of headroom.
+        reservation = await reserve_budget_for_request(
+            request_body=_request_body(),
+            route="/chat/completions",
+            llm_router=None,
+            valid_token=valid_token,
+            team_object=None,
+            user_object=None,
+            prisma_client=None,
+            user_api_key_cache=key_cache,
+            proxy_logging_obj=proxy_logging_obj,
+            end_user_id="alice",
+            end_user_object=end_user_object,
+        )
+
+    # No end-user counter must have been touched. The reservation itself is
+    # None because no other counters apply (no team_object, no max_budget on
+    # the key) — the point is that the end-user budget did not fire.
+    assert (
+        counter_cache.in_memory_cache.get_cache(key="spend:end_user:alice") is None
+    ), "end-user budget counter must not be seeded when a virtual/team key is used"
+    if reservation is not None:
+        await release_budget_reservation(reservation)
+
+
+@pytest.mark.asyncio
+async def test_should_apply_end_user_budget_reservation_when_master_key_is_used(
+    spend_counter_state,
+):
+    """Master-key request with ``user=<end_user_id>`` MUST still apply the
+    end-user's budget reservation. The symmetric post-call guard preserves
+    end-user spend tracking for master-key requests; the pre-call path must
+    keep the same contract.
+    """
+    counter_cache, key_cache = spend_counter_state
+    proxy_logging_obj = ProxyLogging(user_api_key_cache=key_cache)
+    valid_token = UserAPIKeyAuth(
+        token=MASTER_KEY_HASH_FOR_RESERVATION_TESTS,
+    )
+    end_user_object = LiteLLM_EndUserTable(
+        user_id="alice",
+        blocked=False,
+        spend=0.0,
+        litellm_budget_table=LiteLLM_BudgetTable(max_budget=2.0),
+    )
+
+    with (
+        patch(
+            "litellm.proxy.proxy_server.litellm_master_key_hash",
+            MASTER_KEY_HASH_FOR_RESERVATION_TESTS,
+        ),
+        patch(
+            "litellm.proxy.spend_tracking.budget_reservation.estimate_request_max_cost",
+            return_value=0.5,
+        ),
+    ):
+        reservation = await reserve_budget_for_request(
+            request_body=_request_body(),
+            route="/chat/completions",
+            llm_router=None,
+            valid_token=valid_token,
+            team_object=None,
+            user_object=None,
+            prisma_client=None,
+            user_api_key_cache=key_cache,
+            proxy_logging_obj=proxy_logging_obj,
+            end_user_id="alice",
+            end_user_object=end_user_object,
+        )
+
+    assert (
+        reservation is not None
+    ), "end-user budget reservation must fire when the master key is used"
+    assert counter_cache.in_memory_cache.get_cache(
+        key="spend:end_user:alice"
+    ) == pytest.approx(0.5)
+    await release_budget_reservation(reservation)
