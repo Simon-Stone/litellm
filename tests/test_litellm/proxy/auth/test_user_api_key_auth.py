@@ -3335,3 +3335,135 @@ async def test_master_key_auth_substitutes_alias_for_api_key():
     finally:
         for k, v in _orig.items():
             setattr(_proxy_server_mod, k, v)
+
+
+@pytest.mark.asyncio
+async def test_should_skip_end_user_budget_check_when_virtual_key_request_carries_end_user_id():
+    """Regression: when a virtual/team key request includes ``user=<end_user_id>``
+    in the body, ``_user_api_key_auth_builder`` previously called
+    ``get_end_user_object`` with ``skip_budget_checks=False``, which made
+    ``_check_end_user_budget`` (auth_checks.py) raise
+    ``litellm.BudgetExceededError`` purely on customer-scoped budget — even
+    though the key/team budget had plenty of headroom and the post-call spend
+    writer would not have attributed the spend to the end user
+    (commit 377608b6de). This test asserts the symmetric pre-auth skip: a
+    virtual key carrying ``user=<end_user_id>`` must reach
+    ``get_end_user_object`` with ``skip_budget_checks=True``.
+    """
+    from fastapi import Request
+    from starlette.datastructures import URL
+
+    import litellm.proxy.proxy_server as _proxy_server_mod
+    from litellm.proxy.auth.user_api_key_auth import _user_api_key_auth_builder
+
+    virtual_api_key = "sk-virtual-team-key-abc"
+    valid_token = UserAPIKeyAuth(
+        api_key=virtual_api_key,
+        token=virtual_api_key,
+        user_role=LitellmUserRoles.INTERNAL_USER,
+        team_id="team-shared",
+    )
+
+    attrs = _proxy_server_attrs_for_custom_auth(user_custom_auth=None)
+    attrs["master_key"] = "sk-master-key-DIFFERENT"
+    _orig = {k: getattr(_proxy_server_mod, k, None) for k in attrs}
+    try:
+        for k, v in attrs.items():
+            setattr(_proxy_server_mod, k, v)
+
+        request = Request(scope={"type": "http"})
+        request._url = URL(url="/chat/completions")
+
+        with (
+            patch(
+                "litellm.proxy.auth.user_api_key_auth.get_end_user_object",
+                new_callable=AsyncMock,
+                return_value=None,
+            ) as mock_get_end_user,
+            patch(
+                "litellm.proxy.auth.user_api_key_auth.get_key_object",
+                new_callable=AsyncMock,
+                return_value=valid_token,
+            ),
+            patch(
+                "litellm.proxy.auth.user_api_key_auth.get_team_object",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            try:
+                await _user_api_key_auth_builder(
+                    request=request,
+                    api_key=f"Bearer {virtual_api_key}",
+                    azure_api_key_header="",
+                    anthropic_api_key_header=None,
+                    google_ai_studio_api_key_header=None,
+                    azure_apim_header=None,
+                    request_data={"user": "alice", "model": "gpt-4o"},
+                )
+            except Exception:
+                # Downstream of the end-user lookup, the builder may still
+                # raise for unrelated reasons under these mocks. We only
+                # care about how ``get_end_user_object`` was invoked.
+                pass
+
+            mock_get_end_user.assert_awaited_once()
+            kwargs = mock_get_end_user.await_args.kwargs
+            assert kwargs.get("end_user_id") == "alice"
+            assert kwargs.get("skip_budget_checks") is True, (
+                "virtual/team key requests must NOT enforce end-user budget; "
+                "symmetric with the post-call writer suppression from "
+                "commit 377608b6de"
+            )
+    finally:
+        for k, v in _orig.items():
+            setattr(_proxy_server_mod, k, v)
+
+
+@pytest.mark.asyncio
+async def test_should_enforce_end_user_budget_check_when_master_key_request_carries_end_user_id():
+    """Counterpart of the virtual-key skip: a request authenticated with the
+    actual master key MUST still go through ``_check_end_user_budget``
+    (i.e. ``skip_budget_checks=False``), so master-key-direct end-user
+    accounting continues to work as before."""
+    from fastapi import Request
+    from starlette.datastructures import URL
+
+    import litellm.proxy.proxy_server as _proxy_server_mod
+    from litellm.proxy.auth.user_api_key_auth import _user_api_key_auth_builder
+
+    attrs = _proxy_server_attrs_for_custom_auth(user_custom_auth=None)
+    master_key = attrs["master_key"]
+    _orig = {k: getattr(_proxy_server_mod, k, None) for k in attrs}
+    try:
+        for k, v in attrs.items():
+            setattr(_proxy_server_mod, k, v)
+
+        request = Request(scope={"type": "http"})
+        request._url = URL(url="/chat/completions")
+
+        with patch(
+            "litellm.proxy.auth.user_api_key_auth.get_end_user_object",
+            new_callable=AsyncMock,
+            return_value=None,
+        ) as mock_get_end_user:
+            try:
+                await _user_api_key_auth_builder(
+                    request=request,
+                    api_key=f"Bearer {master_key}",
+                    azure_api_key_header="",
+                    anthropic_api_key_header=None,
+                    google_ai_studio_api_key_header=None,
+                    azure_apim_header=None,
+                    request_data={"user": "alice", "model": "gpt-4o"},
+                )
+            except Exception:
+                pass
+
+            mock_get_end_user.assert_awaited_once()
+            kwargs = mock_get_end_user.await_args.kwargs
+            assert kwargs.get("end_user_id") == "alice"
+            assert kwargs.get("skip_budget_checks") is False
+    finally:
+        for k, v in _orig.items():
+            setattr(_proxy_server_mod, k, v)
