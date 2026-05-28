@@ -2440,6 +2440,27 @@ def _copy_user_api_key_auth_for_cache(
     copied_key_obj.budget_reservation = None
     copied_key_obj.parent_otel_span = None
     copied_key_obj.request_route = None
+    # End-user-derived fields are PER-REQUEST (they depend on the `user`
+    # field in the request body, not on the API key) and MUST NOT be
+    # cached against the hashed token. Otherwise, when multiple end_users
+    # share the same virtual key (a common pattern with Open WebUI / agent
+    # gateways that forward a per-user identifier), the first request's
+    # end-user policy fields leak onto every subsequent request and
+    # silently override the DB-resolved values for other end_users.
+    #
+    # See diagnosis notes: the symptom is a user with budget=20 being
+    # rejected against the cached `end_user_max_budget=2.0` left over
+    # from a different end_user on the default budget. _check_end_user_*
+    # paths still resolve the correct value from the DB join, but the
+    # in-memory `valid_token.end_user_max_budget` (set per-request in
+    # `_user_api_key_auth_builder`) is preferred by
+    # `_get_end_user_budget_counter`, so a stale cached value wins.
+    copied_key_obj.end_user_id = None
+    copied_key_obj.end_user_tpm_limit = None
+    copied_key_obj.end_user_rpm_limit = None
+    copied_key_obj.end_user_max_budget = None
+    copied_key_obj.end_user_model_max_budget = None
+    copied_key_obj.allowed_model_region = None
     return copied_key_obj
 
 
