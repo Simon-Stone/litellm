@@ -668,7 +668,29 @@ async def common_checks(  # noqa: PLR0915
             end_user_object is not None
             and end_user_object.litellm_budget_table is not None
         ):
-            await _check_end_user_budget(end_user_obj=end_user_object, route=route)
+            # Symmetric with commit 377608b6de ("don't increase end user spend
+            # when team key is used") and with the two end-user-fetch sites in
+            # ``_user_api_key_auth_builder`` (line ~1073) and
+            # ``_run_centralized_common_checks`` (line ~1919): when the request
+            # is NOT made directly with the master key (i.e. it's a
+            # virtual/team key carrying ``user=<end_user_id>`` in the body),
+            # end-user budget enforcement is suppressed. The key and team
+            # budgets are the authoritative scopes, and post-call spend
+            # tracking already drops the end-user attribution in this case.
+            # This is the THIRD enforcement site -- the previous two patches
+            # skipped the cache-warming end-user fetch, but ``common_checks``
+            # is handed an ``end_user_object`` that was fetched somewhere up
+            # the stack (e.g. ``_run_centralized_common_checks`` got it from
+            # the cache that the first lookup populated), so the budget check
+            # still fires here unless explicitly gated.
+            from litellm.constants import LITELLM_PROXY_MASTER_KEY_ALIAS
+
+            is_master_key_request = (
+                valid_token is not None
+                and valid_token.api_key == LITELLM_PROXY_MASTER_KEY_ALIAS
+            )
+            if is_master_key_request:
+                await _check_end_user_budget(end_user_obj=end_user_object, route=route)
 
     _enforce_user_param_check(general_settings, request, request_body, route)
     _reject_clientside_metadata_tags_check(general_settings, request_body, route)

@@ -3016,3 +3016,115 @@ async def test_team_member_budget_check_zero_per_member_row_still_blocks():
                 proxy_logging_obj=proxy_logging_obj,
             )
     assert exc_info.value.max_budget == 0.0
+
+
+@pytest.mark.asyncio
+async def test_common_checks_should_skip_end_user_budget_check_for_virtual_key():
+    """Regression for the production traceback at
+    ``user_api_key_auth.py:2060 → common_checks → auth_checks.py:671 →
+    _check_end_user_budget``: when a virtual/team key request reaches
+    ``common_checks`` with an ``end_user_object`` that carries a budget
+    (e.g. cached from an earlier master-key-warmed lookup), the end-user
+    budget MUST NOT be enforced — only the key/team budgets are
+    authoritative for a non-master request. This is symmetric with commit
+    377608b6de and the two upstream end-user-fetch sites
+    (``_user_api_key_auth_builder``, ``_run_centralized_common_checks``).
+    """
+    from fastapi import Request
+
+    from litellm.proxy.auth.auth_checks import common_checks
+
+    end_user_object = LiteLLM_EndUserTable(
+        user_id="customer-over-budget",
+        blocked=False,
+        spend=999.0,
+        litellm_budget_table=LiteLLM_BudgetTable(max_budget=1.0),
+    )
+
+    valid_token = UserAPIKeyAuth(
+        token="hashed-virtual-key",
+        api_key="sk-virtual-team-key",  # NOT the master-key alias
+        models=["gpt-3.5-turbo"],
+    )
+
+    request_body = {
+        "model": "gpt-3.5-turbo",
+        "messages": [{"role": "user", "content": "hi"}],
+        "user": "customer-over-budget",
+    }
+
+    with patch(
+        "litellm.proxy.auth.auth_checks._check_end_user_budget",
+        new_callable=AsyncMock,
+    ) as mock_check:
+        result = await common_checks(
+            request_body=request_body,
+            team_object=None,
+            user_object=None,
+            end_user_object=end_user_object,
+            global_proxy_spend=None,
+            general_settings={},
+            route="/chat/completions",
+            llm_router=None,
+            proxy_logging_obj=MagicMock(),
+            valid_token=valid_token,
+            request=MagicMock(spec=Request),
+        )
+
+    assert result is True
+    mock_check.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_common_checks_should_enforce_end_user_budget_check_for_master_key():
+    """Counterpart of the virtual-key skip: a request authenticated with
+    the master key (stamped with ``LITELLM_PROXY_MASTER_KEY_ALIAS`` on
+    ``UserAPIKeyAuth.api_key``) MUST still have its end-user budget
+    enforced inside ``common_checks``. This guarantees the gate does not
+    regress legitimate admin-driven end-user budget enforcement.
+    """
+    from fastapi import Request
+
+    from litellm.constants import LITELLM_PROXY_MASTER_KEY_ALIAS
+    from litellm.proxy.auth.auth_checks import common_checks
+
+    end_user_object = LiteLLM_EndUserTable(
+        user_id="customer-over-budget",
+        blocked=False,
+        spend=999.0,
+        litellm_budget_table=LiteLLM_BudgetTable(max_budget=1.0),
+    )
+
+    valid_token = UserAPIKeyAuth(
+        token="master-key-token",
+        api_key=LITELLM_PROXY_MASTER_KEY_ALIAS,
+        models=["gpt-3.5-turbo"],
+    )
+
+    request_body = {
+        "model": "gpt-3.5-turbo",
+        "messages": [{"role": "user", "content": "hi"}],
+        "user": "customer-over-budget",
+    }
+
+    with patch(
+        "litellm.proxy.auth.auth_checks._check_end_user_budget",
+        new_callable=AsyncMock,
+    ) as mock_check:
+        await common_checks(
+            request_body=request_body,
+            team_object=None,
+            user_object=None,
+            end_user_object=end_user_object,
+            global_proxy_spend=None,
+            general_settings={},
+            route="/chat/completions",
+            llm_router=None,
+            proxy_logging_obj=MagicMock(),
+            valid_token=valid_token,
+            request=MagicMock(spec=Request),
+        )
+
+    mock_check.assert_awaited_once_with(
+        end_user_obj=end_user_object, route="/chat/completions"
+    )
