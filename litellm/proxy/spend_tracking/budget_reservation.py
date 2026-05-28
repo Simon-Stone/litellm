@@ -320,6 +320,35 @@ async def _get_budget_counters(
     return counters
 
 
+def _is_virtual_key_request(valid_token: UserAPIKeyAuth) -> bool:
+    """Return True when the request comes from a virtual/team key (anything
+    that is not the master key).
+
+    Mirrors the predicate in ``db_spend_update_writer.update_database`` and
+    ``proxy_track_cost_callback._ProxyDBLogger.async_post_call_success_hook``
+    (introduced in 377608b6de "don't increase end user spend when team key
+    is used"). End-user spend tracking — both the pre-call budget
+    reservation and the post-call spend writes — only applies when the
+    master key is used directly. When a virtual/team key is used, the key
+    and team budgets are the authoritative scopes; the per-end-user budget
+    must not fire, otherwise a customer-scoped budget can block requests
+    routed through a team key with plenty of team-budget headroom.
+    """
+    from litellm.proxy.proxy_server import litellm_master_key_hash
+
+    token = valid_token.token
+    if token is None:
+        return False
+    if token == litellm_master_key_hash:
+        return False
+    # 'litellm_proxy_master_key' is the well-known alias substituted when
+    # ``disable_adding_master_key_hash_to_db=True``; treat it as the master
+    # key for this purpose, matching the post-call writers.
+    if token == "litellm_proxy_master_key":
+        return False
+    return True
+
+
 async def _get_end_user_budget_counter(
     valid_token: UserAPIKeyAuth,
     end_user_id: Optional[str],
@@ -327,6 +356,14 @@ async def _get_end_user_budget_counter(
 ) -> Optional[_BudgetCounter]:
     end_user_id = end_user_id or valid_token.end_user_id
     if end_user_id is None:
+        return None
+
+    # Pre-call symmetric counterpart of 377608b6de: when a virtual/team key
+    # is used, end-user spend tracking is suppressed post-call, so the
+    # pre-call reservation must also skip the end-user budget. Otherwise a
+    # customer-scoped budget (e.g. ``alice`` with max_budget=2.0) blocks
+    # requests routed through a team key whose own budget has headroom.
+    if _is_virtual_key_request(valid_token):
         return None
 
     source_cache_key = f"end_user_id:{end_user_id}"
