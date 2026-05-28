@@ -1144,6 +1144,36 @@ async def _user_api_key_auth_builder(  # noqa: PLR0915
             try:
                 end_user_params["end_user_id"] = end_user_id
 
+                # Symmetric with commit 377608b6de ("don't increase end user
+                # spend when team key is used") and the pre-call reservation
+                # skip in ``_get_end_user_budget_counter``: when the request
+                # is NOT made directly with the master key (i.e. it's a
+                # virtual/team key carrying ``user=<end_user_id>`` in the
+                # body), the end-user budget must not be enforced -- the key
+                # and team budgets are the authoritative scopes, and post-call
+                # spend tracking already suppresses end-user attribution in
+                # this case. Without this skip, a customer-scoped budget can
+                # block a team-key request that has plenty of team-budget
+                # headroom, which is exactly the production incident this
+                # branch fixes (BudgetExceededError raised from
+                # ``get_end_user_object`` -> ``_check_end_user_budget`` at
+                # auth time, before the reservation pipeline is even
+                # reached).
+                end_user_skip_budget_checks = skip_budget_checks
+                if (
+                    not end_user_skip_budget_checks
+                    and isinstance(master_key, str)
+                    and isinstance(api_key, str)
+                ):
+                    try:
+                        is_master_key_request = secrets.compare_digest(
+                            api_key, master_key
+                        )
+                    except Exception:
+                        is_master_key_request = False
+                    if not is_master_key_request:
+                        end_user_skip_budget_checks = True
+
                 with tracer.trace("litellm.proxy.auth.get_end_user_object"):
                     _end_user_object = await get_end_user_object(
                         end_user_id=end_user_id,
@@ -1152,7 +1182,7 @@ async def _user_api_key_auth_builder(  # noqa: PLR0915
                         parent_otel_span=parent_otel_span,
                         proxy_logging_obj=proxy_logging_obj,
                         route=route,
-                        skip_budget_checks=skip_budget_checks,
+                        skip_budget_checks=end_user_skip_budget_checks,
                     )
                 if _end_user_object is not None:
                     end_user_params["allowed_model_region"] = (
@@ -1974,6 +2004,25 @@ async def _run_centralized_common_checks(  # noqa: PLR0915
         fetch_coros.append(_safe_fetch("project", _noop_none()))
 
     if end_user_id:
+        # Symmetric with commit 377608b6de ("don't increase end user spend
+        # when team key is used"), the pre-auth skip in
+        # ``_user_api_key_auth_builder`` (line ~1073), and the pre-call
+        # reservation skip in ``_get_end_user_budget_counter``: when the
+        # request is NOT authenticated by the master key directly (i.e.
+        # it's a virtual/team key carrying ``user=<end_user_id>`` in the
+        # body), the end-user budget must not be enforced. The key and
+        # team budgets are the authoritative scopes; post-call spend
+        # tracking already suppresses end-user attribution in this case.
+        # Without this skip, ``_check_end_user_budget`` -- called from
+        # within ``get_end_user_object`` -- raises BudgetExceededError on
+        # a customer-scoped budget for a team-key request that has plenty
+        # of team-budget headroom. The pre-auth site at line ~1073 covers
+        # the FIRST end-user lookup; this site covers the SECOND lookup
+        # that ``_run_centralized_common_checks`` performs after key
+        # resolution. Both must apply the skip consistently.
+        end_user_skip_budget_checks = (
+            user_api_key_auth_obj.api_key != LITELLM_PROXY_MASTER_KEY_ALIAS
+        )
         fetch_coros.append(
             _safe_fetch(
                 "end_user",
@@ -1984,6 +2033,7 @@ async def _run_centralized_common_checks(  # noqa: PLR0915
                     parent_otel_span=parent_otel_span,
                     proxy_logging_obj=proxy_logging_obj,
                     route=route,
+                    skip_budget_checks=end_user_skip_budget_checks,
                 ),
             )
         )

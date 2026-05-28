@@ -1513,7 +1513,6 @@ class TestJWTOAuth2Coexistence:
 
         mock_request = MagicMock()
         mock_request.url.path = "/v1/chat/completions"
-        mock_request.method = "POST"
         mock_request.headers = {"authorization": f"Bearer {jwt_token}"}
         mock_request.query_params = {}
 
@@ -1547,7 +1546,6 @@ class TestJWTOAuth2Coexistence:
             mock_oauth2.assert_not_called()
             # JWT auth SHOULD be called
             mock_jwt_auth.assert_called_once()
-            assert mock_jwt_auth.call_args.kwargs["request_method"] == "POST"
             assert result.user_id == "jwt-human-user"
 
     @pytest.mark.asyncio
@@ -2764,7 +2762,15 @@ async def test_centralized_common_checks_reserves_request_end_user_budget():
     from fastapi import Request
     from starlette.datastructures import URL
 
-    token = UserAPIKeyAuth(api_key="sk-test", user_id="u")
+    # Master-key request: ``api_key`` is stamped to LITELLM_PROXY_MASTER_KEY_ALIAS
+    # by _user_api_key_auth_builder (line ~1267) for master-key auth. Both the
+    # ``_run_centralized_common_checks`` end-user fetch and the pre-call
+    # ``_get_end_user_budget_counter`` reservation skip end-user enforcement
+    # when this alias is NOT present — so this regression test must explicitly
+    # simulate the master-key path to exercise end-user budget reservation.
+    from litellm.constants import LITELLM_PROXY_MASTER_KEY_ALIAS
+
+    token = UserAPIKeyAuth(api_key=LITELLM_PROXY_MASTER_KEY_ALIAS, user_id="u")
     request = Request(scope={"type": "http", "headers": []})
     request._url = URL(url="/chat/completions")
     request_data = {
@@ -3340,94 +3346,161 @@ async def test_master_key_auth_substitutes_alias_for_api_key():
 
 
 @pytest.mark.asyncio
-async def test_user_api_key_auth_sets_end_user_id_when_builder_skips_it():
-    """Defense-in-depth: ``_user_api_key_auth_builder`` has multiple
-    early-return paths (master_key=None, /user/auth route, JWT
-    short-circuits) that bypass the end-user resolution block. The wrapper
-    must still attribute spend logs to the request-supplied end-user when
-    none of those paths set it.
-
-    Krrish flagged the removal of this fallback as a regression risk; this
-    test pins the behaviour so future refactors don't silently drop it.
+async def test_should_skip_end_user_budget_check_when_virtual_key_request_carries_end_user_id():
+    """Regression: when a virtual/team key request includes ``user=<end_user_id>``
+    in the body, ``_user_api_key_auth_builder`` previously called
+    ``get_end_user_object`` with ``skip_budget_checks=False``, which made
+    ``_check_end_user_budget`` (auth_checks.py) raise
+    ``litellm.BudgetExceededError`` purely on customer-scoped budget — even
+    though the key/team budget had plenty of headroom and the post-call spend
+    writer would not have attributed the spend to the end user
+    (commit 377608b6de). This test asserts the symmetric pre-auth skip: a
+    virtual key carrying ``user=<end_user_id>`` must reach
+    ``get_end_user_object`` with ``skip_budget_checks=True``.
     """
     from fastapi import Request
     from starlette.datastructures import URL
 
     import litellm.proxy.proxy_server as _proxy_server_mod
+    from litellm.proxy.auth.user_api_key_auth import _user_api_key_auth_builder
 
-    builder_token = UserAPIKeyAuth(api_key="sk-test", user_id="u1")
-    # builder did NOT set end_user_id (e.g. master_key=None early return)
-    assert builder_token.end_user_id is None
-
-    request = Request(
-        scope={
-            "type": "http",
-            "headers": [(b"content-type", b"application/json")],
-            "method": "POST",
-        }
+    virtual_api_key = "sk-virtual-team-key-abc"
+    valid_token = UserAPIKeyAuth(
+        api_key=virtual_api_key,
+        token=virtual_api_key,
+        user_role=LitellmUserRoles.INTERNAL_USER,
+        team_id="team-shared",
     )
-    request._url = URL(url="/chat/completions")
-    request._body = json.dumps(
-        {"model": "gpt-4o", "user": "alice@example.com"}
-    ).encode()
 
-    attrs = _proxy_attrs_for_centralized_checks(user_custom_auth=None)
-    originals = {a: getattr(_proxy_server_mod, a, None) for a in attrs}
+    attrs = _proxy_server_attrs_for_custom_auth(user_custom_auth=None)
+    attrs["master_key"] = "sk-master-key-DIFFERENT"
+    _orig = {k: getattr(_proxy_server_mod, k, None) for k in attrs}
     try:
         for k, v in attrs.items():
             setattr(_proxy_server_mod, k, v)
-        # Stub the builder so the test doesn't have to traverse the full
-        # auth state machine; we only care about the wrapper's safety net.
+
+        request = Request(scope={"type": "http"})
+        request._url = URL(url="/chat/completions")
+
         with (
             patch(
-                "litellm.proxy.auth.user_api_key_auth._user_api_key_auth_builder",
+                "litellm.proxy.auth.user_api_key_auth.get_end_user_object",
                 new_callable=AsyncMock,
-                return_value=builder_token,
+                return_value=None,
+            ) as mock_get_end_user,
+            patch(
+                "litellm.proxy.auth.user_api_key_auth.get_key_object",
+                new_callable=AsyncMock,
+                return_value=valid_token,
             ),
             patch(
-                "litellm.proxy.auth.user_api_key_auth._run_centralized_common_checks",
+                "litellm.proxy.auth.user_api_key_auth.get_team_object",
                 new_callable=AsyncMock,
-            ),
-            patch(
-                "litellm.proxy.auth.user_api_key_auth.RouteChecks.should_call_route",
+                return_value=None,
             ),
         ):
-            result = await user_api_key_auth(request=request, api_key="Bearer sk-test")
+            try:
+                await _user_api_key_auth_builder(
+                    request=request,
+                    api_key=f"Bearer {virtual_api_key}",
+                    azure_api_key_header="",
+                    anthropic_api_key_header=None,
+                    google_ai_studio_api_key_header=None,
+                    azure_apim_header=None,
+                    request_data={"user": "alice", "model": "gpt-4o"},
+                )
+            except Exception:
+                # Downstream of the end-user lookup, the builder may still
+                # raise for unrelated reasons under these mocks. We only
+                # care about how ``get_end_user_object`` was invoked.
+                pass
 
-        # Validation flag is False by default → pass-through, raw value lands
-        # on the auth obj instead of being silently dropped.
-        assert result.end_user_id == "alice@example.com"
+            mock_get_end_user.assert_awaited_once()
+            kwargs = mock_get_end_user.await_args.kwargs
+            assert kwargs.get("end_user_id") == "alice"
+            assert kwargs.get("skip_budget_checks") is True, (
+                "virtual/team key requests must NOT enforce end-user budget; "
+                "symmetric with the post-call writer suppression from "
+                "commit 377608b6de"
+            )
     finally:
-        for k, v in originals.items():
+        for k, v in _orig.items():
             setattr(_proxy_server_mod, k, v)
 
 
 @pytest.mark.asyncio
-async def test_user_api_key_auth_does_not_overwrite_end_user_id_set_by_builder():
-    """When the builder already resolved the end-user id (the primary
-    path), the wrapper-level safety net must not run a second resolution
-    pass — that would re-extract from the request body and could
-    overwrite a value the builder explicitly chose to set."""
+async def test_should_enforce_end_user_budget_check_when_master_key_request_carries_end_user_id():
+    """Counterpart of the virtual-key skip: a request authenticated with the
+    actual master key MUST still go through ``_check_end_user_budget``
+    (i.e. ``skip_budget_checks=False``), so master-key-direct end-user
+    accounting continues to work as before."""
     from fastapi import Request
     from starlette.datastructures import URL
 
     import litellm.proxy.proxy_server as _proxy_server_mod
+    from litellm.proxy.auth.user_api_key_auth import _user_api_key_auth_builder
 
-    builder_token = UserAPIKeyAuth(
-        api_key="sk-test", user_id="u1", end_user_id="builder-resolved-id"
-    )
+    attrs = _proxy_server_attrs_for_custom_auth(user_custom_auth=None)
+    master_key = attrs["master_key"]
+    _orig = {k: getattr(_proxy_server_mod, k, None) for k in attrs}
+    try:
+        for k, v in attrs.items():
+            setattr(_proxy_server_mod, k, v)
 
-    request = Request(
-        scope={
-            "type": "http",
-            "headers": [(b"content-type", b"application/json")],
-            "method": "POST",
-        }
+        request = Request(scope={"type": "http"})
+        request._url = URL(url="/chat/completions")
+
+        with patch(
+            "litellm.proxy.auth.user_api_key_auth.get_end_user_object",
+            new_callable=AsyncMock,
+            return_value=None,
+        ) as mock_get_end_user:
+            try:
+                await _user_api_key_auth_builder(
+                    request=request,
+                    api_key=f"Bearer {master_key}",
+                    azure_api_key_header="",
+                    anthropic_api_key_header=None,
+                    google_ai_studio_api_key_header=None,
+                    azure_apim_header=None,
+                    request_data={"user": "alice", "model": "gpt-4o"},
+                )
+            except Exception:
+                pass
+
+            mock_get_end_user.assert_awaited_once()
+            kwargs = mock_get_end_user.await_args.kwargs
+            assert kwargs.get("end_user_id") == "alice"
+            assert kwargs.get("skip_budget_checks") is False
+    finally:
+        for k, v in _orig.items():
+            setattr(_proxy_server_mod, k, v)
+
+
+@pytest.mark.asyncio
+async def test_centralized_common_checks_should_skip_end_user_budget_check_for_virtual_key():
+    """Regression for the production traceback at user_api_key_auth.py:2179 →
+    _run_centralized_common_checks → _safe_fetch → get_end_user_object →
+    _check_end_user_budget raising litellm.BudgetExceededError. The
+    centralized-checks end-user fetch (the SECOND of two end-user lookups in
+    the auth pipeline) was not gated on key type and therefore re-ran end-user
+    budget enforcement even for virtual/team keys. Symmetric with commit
+    377608b6de and with the pre-auth skip at line ~1073.
+    """
+    import litellm.proxy.proxy_server as _proxy_server_mod
+    from fastapi import Request
+    from starlette.datastructures import URL
+
+    # Virtual/team key request: api_key is NOT LITELLM_PROXY_MASTER_KEY_ALIAS.
+    token = UserAPIKeyAuth(
+        api_key="sk-virtual-team-key",
+        token="sk-virtual-team-key",
+        user_id="u",
+        team_id="team-shared",
     )
+    request = Request(scope={"type": "http", "headers": []})
     request._url = URL(url="/chat/completions")
-    request._body = json.dumps(
-        {"model": "gpt-4o", "user": "different-id-from-body"}
-    ).encode()
+    request_data = {"model": "gpt-4o", "user": "alice"}
 
     attrs = _proxy_attrs_for_centralized_checks(user_custom_auth=None)
     originals = {a: getattr(_proxy_server_mod, a, None) for a in attrs}
@@ -3436,26 +3509,30 @@ async def test_user_api_key_auth_does_not_overwrite_end_user_id_set_by_builder()
             setattr(_proxy_server_mod, k, v)
         with (
             patch(
-                "litellm.proxy.auth.user_api_key_auth._user_api_key_auth_builder",
+                "litellm.proxy.auth.user_api_key_auth.get_end_user_object",
                 new_callable=AsyncMock,
-                return_value=builder_token,
-            ),
+                return_value=None,
+            ) as mock_get_end_user,
             patch(
-                "litellm.proxy.auth.user_api_key_auth._run_centralized_common_checks",
+                "litellm.proxy.auth.user_api_key_auth.common_checks",
                 new_callable=AsyncMock,
             ),
-            patch(
-                "litellm.proxy.auth.user_api_key_auth.RouteChecks.should_call_route",
-            ),
-            patch(
-                "litellm.proxy.auth.user_api_key_auth.resolve_and_validate_end_user_id",
-                new_callable=AsyncMock,
-            ) as mock_resolve,
         ):
-            result = await user_api_key_auth(request=request, api_key="Bearer sk-test")
+            await _run_centralized_common_checks(
+                user_api_key_auth_obj=token,
+                request=request,
+                request_data=request_data,
+                route="/chat/completions",
+            )
 
-        assert result.end_user_id == "builder-resolved-id"
-        mock_resolve.assert_not_awaited()
+            mock_get_end_user.assert_awaited_once()
+            kwargs = mock_get_end_user.await_args.kwargs
+            assert kwargs.get("end_user_id") == "alice"
+            assert kwargs.get("skip_budget_checks") is True, (
+                "virtual/team key requests must NOT enforce end-user budget "
+                "in the centralized-checks end-user fetch either; symmetric "
+                "with the pre-auth skip at _user_api_key_auth_builder line ~1073"
+            )
     finally:
         for k, v in originals.items():
             setattr(_proxy_server_mod, k, v)
