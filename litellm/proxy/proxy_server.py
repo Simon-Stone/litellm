@@ -2562,6 +2562,18 @@ async def update_cache(  # noqa: PLR0915
             # Calculate the new cost by adding the existing cost and response_cost
             new_spend = existing_spend + response_cost
 
+            # [DEBUG-spend3] track cached LiteLLM_EndUserTable.spend drift.
+            # This value becomes the fallback in _check_end_user_budget when
+            # the spend_counter_cache is cold (single-pod, no Redis).
+            verbose_proxy_logger.warning(
+                "[DEBUG-spend3] end_user=%s cached_spend_was=%s response_cost=%s "
+                "cached_spend_now=%s",
+                end_user_id,
+                existing_spend,
+                response_cost,
+                new_spend,
+            )
+
             existing_spend_obj.spend = new_spend
             values_to_update_in_cache.append(
                 (
