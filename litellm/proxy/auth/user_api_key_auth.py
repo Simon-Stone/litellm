@@ -2004,59 +2004,47 @@ async def _run_centralized_common_checks(  # noqa: PLR0915
         fetch_coros.append(_safe_fetch("project", _noop_none()))
 
     if end_user_id:
-        # Symmetric with commit 377608b6de ("don't increase end user spend
-        # when team key is used"), the pre-auth skip in
-        # ``_user_api_key_auth_builder`` (line ~1073), and the pre-call
-        # reservation skip in ``_get_end_user_budget_counter``: when the
-        # request is NOT authenticated by the master key directly (i.e.
-        # it's a virtual/team key carrying ``user=<end_user_id>`` in the
-        # body), the end-user budget must not be enforced. The key and
-        # team budgets are the authoritative scopes; post-call spend
-        # tracking already suppresses end-user attribution in this case.
-        # Without this skip, ``_check_end_user_budget`` -- called from
-        # within ``get_end_user_object`` -- raises BudgetExceededError on
-        # a customer-scoped budget for a team-key request that has plenty
-        # of team-budget headroom. The pre-auth site at line ~1073 covers
-        # the FIRST end-user lookup; this site covers the SECOND lookup
-        # that ``_run_centralized_common_checks`` performs after key
-        # resolution. Both must apply the skip consistently.
-        end_user_skip_budget_checks = (
+        # Two independent reasons to skip the end-user budget check here:
+        #
+        # 1. Zero-cost model. Symmetric with the original fix in
+        #    f4f03eed8d31017a3fe8f7e0425c0b201096911e and the builder site
+        #    at ``_user_api_key_auth_builder`` line ~1087. If the model has
+        #    explicitly-configured zero cost, NO budget scope (key, team,
+        #    user, OR end-user) should block the request -- a zero-cost
+        #    call cannot move any budget counter. The new preflight
+        #    reservation pipeline correctly honors this via
+        #    ``_should_skip_budget_checks`` -> ``skip_budget_checks`` ->
+        #    ``_reserve_budget_after_common_checks``. This site must apply
+        #    the same skip, otherwise the centralized end-user fetch
+        #    raises ``BudgetExceededError`` from ``_check_end_user_budget``
+        #    before the reservation pipeline is reached, defeating the
+        #    zero-cost bypass for any over-budget end-user.
+        #
+        # 2. Virtual/team key. Symmetric with commit 377608b6de ("don't
+        #    increase end user spend when team key is used"), the
+        #    pre-auth skip in ``_user_api_key_auth_builder`` (line ~1073),
+        #    and the pre-call reservation skip in
+        #    ``_get_end_user_budget_counter``: when the request is NOT
+        #    authenticated by the master key directly (i.e. it's a
+        #    virtual/team key carrying ``user=<end_user_id>`` in the
+        #    body), the end-user budget must not be enforced. The key and
+        #    team budgets are the authoritative scopes; post-call spend
+        #    tracking already suppresses end-user attribution in this
+        #    case.
+        #
+        # The pre-auth site at line ~1073 covers the FIRST end-user
+        # lookup; this site covers the SECOND lookup that
+        # ``_run_centralized_common_checks`` performs after key
+        # resolution. Both must apply BOTH skips consistently.
+        zero_cost_skip = _should_skip_budget_checks(
+            request_data=request_data,
+            route=route,
+            request=request,
+            llm_router=llm_router,
+        )
+        end_user_skip_budget_checks = zero_cost_skip or (
             user_api_key_auth_obj.api_key != LITELLM_PROXY_MASTER_KEY_ALIAS
         )
-        # [DEBUG-zc01] Diagnose zero-cost model + over-budget end-user
-        # regression. If the centralized end-user fetch is reached with
-        # end_user_skip_budget_checks=False on a zero-cost model, this site
-        # is missing the symmetric zero-cost skip that the builder applies
-        # at line ~1087 (original fix f4f03eed).
-        try:
-            _dbg_model = _get_model_from_request_context(
-                request_data=request_data,
-                route=route,
-                request=request,
-            )
-            _dbg_zero_cost = (
-                _is_model_cost_zero(model=_dbg_model, llm_router=llm_router)
-                if llm_router is not None
-                else False
-            )
-            verbose_proxy_logger.warning(
-                "[DEBUG-zc01] centralized end_user fetch: "
-                "route=%s end_user_id=%s api_key_is_master_alias=%s "
-                "llm_router_is_none=%s model=%s zero_cost=%s "
-                "end_user_skip_budget_checks=%s",
-                route,
-                end_user_id,
-                user_api_key_auth_obj.api_key == LITELLM_PROXY_MASTER_KEY_ALIAS,
-                llm_router is None,
-                _dbg_model,
-                _dbg_zero_cost,
-                end_user_skip_budget_checks,
-            )
-        except Exception as _dbg_exc:
-            verbose_proxy_logger.warning(
-                "[DEBUG-zc01] failed to evaluate zero-cost diagnostic: %s",
-                _dbg_exc,
-            )
         fetch_coros.append(
             _safe_fetch(
                 "end_user",
