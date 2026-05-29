@@ -1932,6 +1932,40 @@ async def _run_centralized_common_checks(
         end_user_skip_budget_checks = (
             user_api_key_auth_obj.api_key != LITELLM_PROXY_MASTER_KEY_ALIAS
         )
+        # [DEBUG-zc01] Diagnose zero-cost model + over-budget end-user
+        # regression. If the centralized end-user fetch is reached with
+        # end_user_skip_budget_checks=False on a zero-cost model, this site
+        # is missing the symmetric zero-cost skip that the builder applies
+        # at line ~1087 (original fix f4f03eed).
+        try:
+            _dbg_model = _get_model_from_request_context(
+                request_data=request_data,
+                route=route,
+                request=request,
+            )
+            _dbg_zero_cost = (
+                _is_model_cost_zero(model=_dbg_model, llm_router=llm_router)
+                if llm_router is not None
+                else False
+            )
+            verbose_proxy_logger.warning(
+                "[DEBUG-zc01] centralized end_user fetch: "
+                "route=%s end_user_id=%s api_key_is_master_alias=%s "
+                "llm_router_is_none=%s model=%s zero_cost=%s "
+                "end_user_skip_budget_checks=%s",
+                route,
+                end_user_id,
+                user_api_key_auth_obj.api_key == LITELLM_PROXY_MASTER_KEY_ALIAS,
+                llm_router is None,
+                _dbg_model,
+                _dbg_zero_cost,
+                end_user_skip_budget_checks,
+            )
+        except Exception as _dbg_exc:
+            verbose_proxy_logger.warning(
+                "[DEBUG-zc01] failed to evaluate zero-cost diagnostic: %s",
+                _dbg_exc,
+            )
         fetch_coros.append(
             _safe_fetch(
                 "end_user",
