@@ -1121,12 +1121,49 @@ async def _check_end_user_budget(
     if end_user_budget is None:
         return
 
-    from litellm.proxy.proxy_server import get_current_spend
+    from litellm.proxy.proxy_server import get_current_spend, spend_counter_cache
+
+    counter_key = f"spend:end_user:{end_user_obj.user_id}"
+    fallback_spend = end_user_obj.spend or 0.0
+    # [DEBUG-spend1] pre-check: what we know before consulting the counter
+    _in_mem_before = spend_counter_cache.in_memory_cache.get_cache(key=counter_key)
+    _redis_present = spend_counter_cache.redis_cache is not None
+    verbose_proxy_logger.warning(
+        "[DEBUG-spend1] end_user=%s route=%s cached_obj_spend=%s "
+        "cached_budget_max=%s budget_id=%s in_mem_counter=%s redis_present=%s",
+        end_user_obj.user_id,
+        route,
+        end_user_obj.spend,
+        end_user_budget,
+        getattr(end_user_obj.litellm_budget_table, "budget_id", None),
+        _in_mem_before,
+        _redis_present,
+    )
 
     end_user_spend = await get_current_spend(
-        counter_key=f"spend:end_user:{end_user_obj.user_id}",
-        fallback_spend=end_user_obj.spend or 0.0,
+        counter_key=counter_key,
+        fallback_spend=fallback_spend,
     )
+
+    # [DEBUG-spend2] post-check: which source did we end up trusting?
+    _in_mem_after = spend_counter_cache.in_memory_cache.get_cache(key=counter_key)
+    _used_fallback = (
+        _in_mem_before is None
+        and not _redis_present
+        and abs(end_user_spend - fallback_spend) < 1e-9
+    )
+    verbose_proxy_logger.warning(
+        "[DEBUG-spend2] end_user=%s counter_value=%s fallback_was=%s "
+        "used_fallback=%s in_mem_after=%s budget=%s would_exceed=%s",
+        end_user_obj.user_id,
+        end_user_spend,
+        fallback_spend,
+        _used_fallback,
+        _in_mem_after,
+        end_user_budget,
+        end_user_spend > end_user_budget,
+    )
+
     if end_user_spend > end_user_budget:
         raise litellm.BudgetExceededError(
             current_cost=end_user_spend,
