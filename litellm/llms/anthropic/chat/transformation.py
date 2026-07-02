@@ -96,6 +96,7 @@ from ..common_utils import (
     process_anthropic_headers,
     strip_advisor_blocks_from_messages,
 )
+from ..experimental_pass_through.utils import is_reasoning_auto_summary_enabled
 
 if TYPE_CHECKING:
     from litellm.litellm_core_utils.litellm_logging import Logging as LiteLLMLoggingObj
@@ -1540,7 +1541,6 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
                     optional_params.pop("thinking", None)
                     optional_params.pop("output_config", None)
                 else:
-                    optional_params["thinking"] = mapped_thinking
                     if AnthropicConfig._is_adaptive_thinking_model(model):
                         mapped_effort = REASONING_EFFORT_TO_OUTPUT_CONFIG_EFFORT.get(
                             effort_value
@@ -1552,6 +1552,26 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
                                 llm_provider=self.custom_llm_provider or "anthropic",
                             )
                         optional_params["output_config"] = {"effort": mapped_effort}
+                        # Default thinking.display to "summarized" for adaptive
+                        # thinking so summaries are returned. Precedence:
+                        # explicit caller display > reasoning_auto_summary.
+                        if mapped_thinking.get("type") == "adaptive":
+                            explicit_display: Optional[str] = None
+                            for source in (
+                                optional_params.get("thinking"),
+                                non_default_params.get("thinking"),
+                            ):
+                                if (
+                                    isinstance(source, dict)
+                                    and source.get("display") is not None
+                                ):
+                                    explicit_display = source.get("display")
+                                    break
+                            if explicit_display is not None:
+                                mapped_thinking["display"] = explicit_display
+                            elif is_reasoning_auto_summary_enabled():
+                                mapped_thinking["display"] = "summarized"
+                    optional_params["thinking"] = mapped_thinking
             elif param == "web_search_options" and isinstance(value, dict):
                 hosted_web_search_tool = self.map_web_search_tool(
                     cast(OpenAIWebSearchOptions, value)

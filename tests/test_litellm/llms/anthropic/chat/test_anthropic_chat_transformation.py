@@ -4889,3 +4889,117 @@ def test_sanitize_tool_names_in_request_no_tools_is_noop():
     forward, reverse = AnthropicConfig._sanitize_tool_names_in_request({"tools": []})
     assert forward == {}
     assert reverse == {}
+
+
+@pytest.fixture
+def _restore_reasoning_auto_summary():
+    """Save/restore litellm.reasoning_auto_summary + the env var around a test."""
+    original_flag = litellm.reasoning_auto_summary
+    original_env = os.environ.get("LITELLM_REASONING_AUTO_SUMMARY")
+    try:
+        yield
+    finally:
+        litellm.reasoning_auto_summary = original_flag
+        if original_env is None:
+            os.environ.pop("LITELLM_REASONING_AUTO_SUMMARY", None)
+        else:
+            os.environ["LITELLM_REASONING_AUTO_SUMMARY"] = original_env
+
+
+ADAPTIVE_DISPLAY_MODEL = "claude-opus-4-8"
+
+
+def _map_reasoning_effort_params(model, non_default_params):
+    config = AnthropicConfig()
+    return config.map_openai_params(
+        non_default_params=non_default_params,
+        optional_params={},
+        model=model,
+        drop_params=False,
+    )
+
+
+def test_adaptive_display_unset_when_auto_summary_disabled(
+    _restore_reasoning_auto_summary,
+):
+    litellm.reasoning_auto_summary = False
+    os.environ.pop("LITELLM_REASONING_AUTO_SUMMARY", None)
+
+    result = _map_reasoning_effort_params(
+        ADAPTIVE_DISPLAY_MODEL, {"reasoning_effort": "high"}
+    )
+
+    assert result["thinking"] == {"type": "adaptive"}
+    assert "display" not in result["thinking"]
+    assert result["output_config"] == {"effort": "high"}
+
+
+def test_adaptive_display_summarized_when_flag_enabled(
+    _restore_reasoning_auto_summary,
+):
+    litellm.reasoning_auto_summary = True
+    os.environ.pop("LITELLM_REASONING_AUTO_SUMMARY", None)
+
+    result = _map_reasoning_effort_params(
+        ADAPTIVE_DISPLAY_MODEL, {"reasoning_effort": "high"}
+    )
+
+    assert result["thinking"] == {"type": "adaptive", "display": "summarized"}
+
+
+def test_adaptive_display_summarized_when_env_var_enabled(
+    _restore_reasoning_auto_summary,
+):
+    litellm.reasoning_auto_summary = False
+    os.environ["LITELLM_REASONING_AUTO_SUMMARY"] = "true"
+
+    result = _map_reasoning_effort_params(
+        ADAPTIVE_DISPLAY_MODEL, {"reasoning_effort": "medium"}
+    )
+
+    assert result["thinking"]["display"] == "summarized"
+
+
+def test_adaptive_explicit_display_wins_over_flag(
+    _restore_reasoning_auto_summary,
+):
+    litellm.reasoning_auto_summary = True
+    os.environ.pop("LITELLM_REASONING_AUTO_SUMMARY", None)
+
+    result = _map_reasoning_effort_params(
+        ADAPTIVE_DISPLAY_MODEL,
+        {
+            "reasoning_effort": "high",
+            "thinking": {"type": "adaptive", "display": "omitted"},
+        },
+    )
+
+    assert result["thinking"]["display"] == "omitted"
+
+
+def test_non_adaptive_model_never_gets_display(
+    _restore_reasoning_auto_summary,
+):
+    litellm.reasoning_auto_summary = True
+    os.environ.pop("LITELLM_REASONING_AUTO_SUMMARY", None)
+
+    result = _map_reasoning_effort_params(
+        "claude-3-7-sonnet-20250219", {"reasoning_effort": "high"}
+    )
+
+    assert "budget_tokens" in result["thinking"]
+    assert "display" not in result["thinking"]
+
+
+def test_reasoning_effort_none_strips_thinking_regardless_of_flag(
+    _restore_reasoning_auto_summary,
+):
+    litellm.reasoning_auto_summary = True
+    os.environ.pop("LITELLM_REASONING_AUTO_SUMMARY", None)
+
+    result = _map_reasoning_effort_params(
+        ADAPTIVE_DISPLAY_MODEL, {"reasoning_effort": "none"}
+    )
+
+    assert "thinking" not in result
+    assert "output_config" not in result
