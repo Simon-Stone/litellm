@@ -129,3 +129,9 @@ Before implementing:
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify
 
 Before requesting maintainer review, verify the current PR tip passes required CI and code coverage, meets Greptile confidence of at least 4/5, and has acceptable Veria and Bugbot reviews. Inspect warnings and findings, fix actionable issues, and rerun the affected checks and reviewers after changes. Record evidence for any false positive or unavailable review; never treat a pending or missing bot result as a pass. Do not lower coverage thresholds or lint budgets to satisfy a check
+
+## Dartmouth Fork
+
+This repository is a Dartmouth-maintained fork of LiteLLM, customized for our institutional deployment. We track upstream stable releases but carry local patches to better serve Dartmouth usage patterns.
+
+**Rebase workflow:** When LiteLLM publishes a new stable tag, we rebase onto it. During each rebase, carefully assess whether our local changes are still necessary — upstream may have incorporated equivalent fixes that make our patches obsolete.
