@@ -449,6 +449,14 @@ def _cost_value_as_float(value: str | float | None) -> float | None:
         return None
 
 
+_DEPLOYMENT_MODEL_INFO_ADAPTER: Final = TypeAdapter(dict[str, object])
+
+
+def _model_info_cost(model_info: Mapping[str, object], key: str) -> float | None:
+    value: Final = model_info.get(key)
+    return _cost_value_as_float(value) if isinstance(value, (str, int, float)) else None
+
+
 def model_info_is_active_for_environment(model_info: Mapping[str, object] | None) -> bool:
     """Single owner of the environment-gating rule: a deployment whose model_info names
     `supported_environments` loads only on pods whose LITELLM_ENVIRONMENT is in that list.
@@ -11809,6 +11817,12 @@ class Router:
                 mode = db_model_info.get("mode", "chat")
                 input_cost_per_token = _cost_value_as_float(db_model_info.get("input_cost_per_token"))
                 output_cost_per_token = _cost_value_as_float(db_model_info.get("output_cost_per_token"))
+                cache_read_input_token_cost = _model_info_cost(
+                    _DEPLOYMENT_MODEL_INFO_ADAPTER.validate_python(db_model_info), "cache_read_input_token_cost"
+                )
+                cache_creation_input_token_cost = _model_info_cost(
+                    _DEPLOYMENT_MODEL_INFO_ADAPTER.validate_python(db_model_info), "cache_creation_input_token_cost"
+                )
 
                 model_info = ModelMapInfo(
                     key=model_group,
@@ -11817,6 +11831,8 @@ class Router:
                     max_output_tokens=None,
                     input_cost_per_token=input_cost_per_token,
                     output_cost_per_token=output_cost_per_token,
+                    cache_read_input_token_cost=cache_read_input_token_cost,
+                    cache_creation_input_token_cost=cache_creation_input_token_cost,
                     litellm_provider=llm_provider,
                     mode=mode,
                     supported_openai_params=supported_openai_params,
@@ -11874,6 +11890,20 @@ class Router:
                     or _output_cost_per_token > (model_group_info.output_cost_per_token or 0.0)
                 ):
                     model_group_info.output_cost_per_token = _output_cost_per_token
+                _cache_read_input_token_cost = _cost_value_as_float(model_info.get("cache_read_input_token_cost"))
+                if _cache_read_input_token_cost is not None and (
+                    model_group_info.cache_read_input_token_cost is None
+                    or _cache_read_input_token_cost > (model_group_info.cache_read_input_token_cost or 0.0)
+                ):
+                    model_group_info.cache_read_input_token_cost = _cache_read_input_token_cost
+                _cache_creation_input_token_cost = _cost_value_as_float(
+                    model_info.get("cache_creation_input_token_cost")
+                )
+                if _cache_creation_input_token_cost is not None and (
+                    model_group_info.cache_creation_input_token_cost is None
+                    or _cache_creation_input_token_cost > (model_group_info.cache_creation_input_token_cost or 0.0)
+                ):
+                    model_group_info.cache_creation_input_token_cost = _cache_creation_input_token_cost
                 if (
                     model_info.get("supports_parallel_function_calling", None) is not None
                     and model_info["supports_parallel_function_calling"] is True
