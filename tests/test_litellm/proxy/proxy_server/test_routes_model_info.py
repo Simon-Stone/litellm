@@ -696,6 +696,50 @@ def test_model_group_info_internal_user_key_model_restriction_applies(client, au
     assert [model["model_group"] for model in response.json()["data"]] == ["gpt-4"]
 
 
+def test_model_group_info_reports_cache_token_costs(client, auth_as, monkeypatch, local_model_cost_map):
+    """``GET /model_group/info`` surfaces the cost map's cache read/write token costs.
+
+    Asserts the endpoint agrees with the cost map entry rather than pinning the
+    vendor's price, so an upstream price change is not a broken test.
+    """
+    from litellm import Router
+    from litellm.proxy._types import LitellmUserRoles
+
+    router = Router(
+        model_list=[
+            {
+                "model_name": "gpt-5.6",
+                "litellm_params": {"model": "openai/gpt-5.6", "api_key": "x"},
+                "model_info": {"id": "dep-1"},
+            }
+        ]
+    )
+    monkeypatch.setattr(proxy_server, "llm_router", router)
+    monkeypatch.setattr(proxy_server, "llm_model_list", [{"model_name": "gpt-5.6"}])
+    monkeypatch.setattr(proxy_server, "user_model", None)
+    monkeypatch.setattr(proxy_server, "general_settings", {})
+    monkeypatch.setattr(proxy_server, "prisma_client", None)
+    monkeypatch.setattr(proxy_server, "proxy_logging_obj", None)
+    monkeypatch.setattr(proxy_server, "user_api_key_cache", None)
+
+    from litellm.proxy.agent_endpoints import model_list_helpers
+
+    async def _passthrough(*, model_groups, user_api_key_dict):
+        return model_groups
+
+    monkeypatch.setattr(model_list_helpers, "append_agents_to_model_group", _passthrough)
+
+    with auth_as(LitellmUserRoles.PROXY_ADMIN, models=["gpt-5.6"]):
+        response = client.get("/model_group/info")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert [model["model_group"] for model in data] == ["gpt-5.6"]
+    cost_map_info: Final = litellm.get_model_info("gpt-5.6")
+    assert data[0]["cache_read_input_token_cost"] == cost_map_info["cache_read_input_token_cost"]
+    assert data[0]["cache_creation_input_token_cost"] == cost_map_info["cache_creation_input_token_cost"]
+
+
 # ---------------------------------------------------------------------------
 # GET /v2/model/info?exclude_auto_routers
 # ---------------------------------------------------------------------------

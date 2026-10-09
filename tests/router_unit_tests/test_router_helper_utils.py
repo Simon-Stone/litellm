@@ -925,6 +925,43 @@ def test_set_model_group_info(model_list, user_facing_model_group_name):
     assert resp.model_group == user_facing_model_group_name
 
 
+def test_set_model_group_info_reports_cache_token_costs():
+    """Cache read/write token costs set on deployments reach the model group info.
+
+    A group mixing differently-priced deployments reports the highest of each
+    cache cost, matching the input/output cost aggregation.
+    """
+    router = Router(
+        model_list=[
+            {
+                "model_name": "cache-group",
+                "litellm_params": {"model": "openai/unmapped-a", "api_key": "x"},
+                "model_info": {
+                    "id": "dep-1",
+                    "cache_read_input_token_cost": 1e-06,
+                    "cache_creation_input_token_cost": 2e-06,
+                },
+            },
+            {
+                "model_name": "cache-group",
+                "litellm_params": {"model": "openai/unmapped-b", "api_key": "x"},
+                "model_info": {
+                    "id": "dep-2",
+                    "cache_read_input_token_cost": 5e-06,
+                    "cache_creation_input_token_cost": 1e-06,
+                },
+            },
+        ]
+    )
+    resp = router._set_model_group_info(
+        model_group="cache-group",
+        user_facing_model_group_name="cache-group",
+    )
+    assert resp is not None
+    assert resp.cache_read_input_token_cost == 5e-06
+    assert resp.cache_creation_input_token_cost == 2e-06
+
+
 @pytest.mark.asyncio
 async def test_set_response_headers(model_list):
     """Test if the 'set_response_headers' function is working correctly"""
