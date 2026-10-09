@@ -18,7 +18,11 @@ FROM $LITELLM_BUILD_IMAGE AS pgbouncer-builder
 ARG PGBOUNCER_VERSION
 ARG PGBOUNCER_SHA256
 USER root
-RUN apk add --no-cache build-base pkgconf libevent-dev openssl-dev curl
+# openssl-3.6-dev is pinned from the public Wolfi repo: pgbouncer 1.25.2's
+# lib/usual TLS code dereferences ASN1_TIME internals, which are opaque in
+# the OpenSSL 4 that the Chainguard repo now ships as `openssl-dev`.
+RUN echo "https://packages.wolfi.dev/os" >> /etc/apk/repositories
+RUN apk add --no-cache build-base pkgconf libevent-dev openssl-3.6-dev curl
 WORKDIR /build
 RUN curl -fsSL -o pgbouncer.tar.gz "https://www.pgbouncer.org/downloads/files/${PGBOUNCER_VERSION}/pgbouncer-${PGBOUNCER_VERSION}.tar.gz" && \
     echo "${PGBOUNCER_SHA256}  pgbouncer.tar.gz" | sha256sum -c - && \
@@ -126,7 +130,8 @@ USER root
 RUN echo "https://packages.wolfi.dev/os" >> /etc/apk/repositories
 
 # node (without npm) is required by the prisma CLI at runtime
-RUN apk add --no-cache bash openssl tzdata nodejs python-3.13 libsndfile libevent
+# libssl3/libcrypto3 provide the OpenSSL 3 libs the pgbouncer binary links against
+RUN apk add --no-cache bash openssl libssl3 libcrypto3 tzdata nodejs python-3.13 libsndfile libevent
 COPY --from=pgbouncer-builder /usr/local/bin/pgbouncer /usr/local/bin/pgbouncer
 
 WORKDIR /app
