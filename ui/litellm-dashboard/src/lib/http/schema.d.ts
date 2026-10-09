@@ -37572,6 +37572,10 @@ export interface components {
         };
         /** ModelGroupInfoProxy */
         ModelGroupInfoProxy: {
+            /** Cache Creation Input Token Cost */
+            cache_creation_input_token_cost?: number | null;
+            /** Cache Read Input Token Cost */
+            cache_read_input_token_cost?: number | null;
             /** Configurable Clientside Auth Params */
             configurable_clientside_auth_params?: (string | components["schemas"]["ConfigurableClientsideParamsCustomAuth-Output"])[] | null;
             /** Health Checked At */
