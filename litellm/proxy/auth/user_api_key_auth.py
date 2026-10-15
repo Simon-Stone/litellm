@@ -708,11 +708,21 @@ async def user_api_key_auth_websocket_for_model(websocket: WebSocket, model: str
 
 
 def update_valid_token_with_end_user_params(valid_token: UserAPIKeyAuth, end_user_params: dict) -> UserAPIKeyAuth:
-    valid_token.end_user_id = end_user_params.get("end_user_id")
-    # Only overwrite token fields when the DB-derived value is not None.
-    # This prevents DB lookups (where the budget table has no value set)
-    # from silently clearing values that a custom auth function may have
-    # already set on the token.
+    new_end_user_id = end_user_params.get("end_user_id")
+    if valid_token.end_user_id != new_end_user_id:
+        # End-user fields belong to the request's `user`, not to the key.
+        # When a different end user rides the same key, drop the prior
+        # user's fields wholesale so one user's budget cannot be enforced
+        # against another's request. Same-user turns keep the
+        # only-overwrite-when-set policy below so a custom auth callable
+        # can seed caps that survive a DB row with no limits.
+        valid_token.end_user_tpm_limit = None
+        valid_token.end_user_rpm_limit = None
+        valid_token.end_user_tpd_limit = None
+        valid_token.end_user_max_budget = None
+        valid_token.end_user_model_max_budget = None
+        valid_token.allowed_model_region = None
+    valid_token.end_user_id = new_end_user_id
     if end_user_params.get("end_user_tpm_limit") is not None:
         valid_token.end_user_tpm_limit = end_user_params["end_user_tpm_limit"]
     if end_user_params.get("end_user_rpm_limit") is not None:

@@ -403,3 +403,29 @@ def test_end_user_budget_tpd_limit_reaches_the_token():
 
     assert result.end_user_rpm_limit == 5
     assert result.end_user_tpd_limit == 750000
+
+
+def test_a_different_end_user_cannot_inherit_the_previous_users_budget():
+    """A shared key serves many end users; the token must not keep user A's
+    budget when the next request is for user B, even when user B's DB row
+    sets no limits (BudgetExceeded fired user A's max_budget=2 at user B's
+    spend=2.5)."""
+    valid_token = UserAPIKeyAuth(
+        token="test_token",
+        end_user_id="user-a",
+        end_user_max_budget=2.0,
+        end_user_tpm_limit=100,
+        end_user_rpm_limit=50,
+        allowed_model_region="eu",
+    )
+
+    # user B's DB lookup: row exists but its budget table sets nothing
+    end_user_params = {"end_user_id": "user-b", "allowed_model_region": None}
+
+    result = update_valid_token_with_end_user_params(valid_token, end_user_params)
+
+    assert result.end_user_id == "user-b"
+    assert result.end_user_max_budget is None
+    assert result.end_user_tpm_limit is None
+    assert result.end_user_rpm_limit is None
+    assert result.allowed_model_region is None

@@ -4561,6 +4561,31 @@ async def test_budget_throttle_decision_cleared_before_caching():
 
 
 @pytest.mark.asyncio
+async def test_end_user_fields_cleared_before_caching():
+    """End-user fields come from the request's `user` param, not from the key.
+    Caching them against the hashed token enforces one end user's budget
+    against the next request's end user on a shared key."""
+    from litellm.proxy.auth.auth_checks import _copy_user_api_key_auth_for_cache
+
+    valid_token = _over_budget_token()
+    valid_token.end_user_id = "user-a"
+    valid_token.end_user_max_budget = 2.0
+    valid_token.end_user_tpm_limit = 10
+    valid_token.end_user_rpm_limit = 20
+    valid_token.end_user_model_max_budget = {"gpt-4": {"budget_limit": 5.0, "time_period": "1d"}}
+
+    cached = _copy_user_api_key_auth_for_cache(user_api_key_obj=valid_token)
+
+    assert cached.end_user_id is None
+    assert cached.end_user_max_budget is None
+    assert cached.end_user_tpm_limit is None
+    assert cached.end_user_rpm_limit is None
+    assert cached.end_user_model_max_budget is None
+    # key-level fields survive the copy
+    assert cached.token == valid_token.token
+
+
+@pytest.mark.asyncio
 async def test_budget_exceeded_throttle_no_configured_limits(monkeypatch):
     monkeypatch.setattr(litellm, "budget_exceeded_throttle_percentage", 0.1)
     valid_token = _over_budget_token(metadata={"throttle_on_budget_exceeded": True})

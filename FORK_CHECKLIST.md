@@ -4,6 +4,7 @@ This checklist verifies all changes made by Simon Stone on top of upstream Berri
 
 **Last rebase: `v1.105.0` (2026-10-12).** `main` = `v1.105.0` + 6 patches (plus the checklist-update commit that carries this text):
 `3191c97bc4b` -> `08b189ce574` -> `f04be364d32` -> `abe24dff15e` -> `b6acc5e55e5` -> `176d35ddac9`.
+A post-rebase fix commit re-applies the end-user field caching fix from `a58e1a4fa5` (see its row below).
 Unit validation (targeted suites, mapped to the new `tests/unit/` layout after upstream renamed
 `tests/test_litellm/`): 603 passed / 1 failed (`test_async_log_success_event_hands_the_sidecar_a_compact_event_and_skips_the_pipeline`,
 the known `AF_UNIX path too long` from this machine's deep tmp dir, unrelated to any code change).
@@ -29,8 +30,8 @@ removing that cast (the neighboring `input_cost_per_token` lines already pass `.
 | `5859a4012c` | doc: add context to agents docs | **fork-maintained**: re-applied at v1.101.0 as `fc6dbfe774`, at v1.103.2 as `6c1dbc0a6bc`, now at v1.105.0 as `08b189ce574` (clean cherry-pick onto the unchanged tail of `AGENTS.md`). |
 | `bc9bd4063b` | fix: don't send 'id' on FunctionCall/FunctionResponse for Vertex AI | **upstream-closed**: PR #34603 (merge `9f9d72b50f`) + `acd414f186`. Upstream threads `forward_function_call_id` through `transform_request`, gated by `VertexGeminiConfig._forward_gemini_function_call_id` (Gemini 3+ on Vertex AI and Google AI alike — stronger than the fork's vertex-only omission). Regression test upstream: `test_forward_gemini_function_call_id_is_gated_on_model_version_only`. |
 | `b1b597e087` | fix: bump dependencies to close vuln CVE-2026-48710 | **upstream-closed**: v1.101.0 lock has tornado **6.5.8** (≥ our 6.5.6) and uvicorn **0.51.0** (≥ our 0.49.0). |
-| `a58e1a4fa5` | fix: cache end user derived fields per request, not per key | **upstream-closed**: upstream per-request `Principal` projection / in-request metadata in the auth flow. Oracle: `test_user_api_key_auth.py` 163/163 PASS on clean v1.101.0. |
-| `ab795fff94` | fix: apply symmetric logic from spend writing to preflight reservation checks | **upstream-closed**: `_reserve_budget_after_common_checks` + release/invalidate on failure (`_update_database_and_spend_counters`). Oracle: `test_budget_reservation.py` 71/71 PASS (incl. second-end-user shrink, release-on-failure, invalidate-on-spend-failure). |
+| `a58e1a4fa5` | fix: cache end user derived fields per request, not per key | **fork-maintained**: the v1.101.0 "upstream-closed" verdict was wrong — upstream never carried an equivalent (verified against the `v1.101.0` tag: `_copy_user_api_key_auth_for_cache` and `update_valid_token_with_end_user_params` had the pre-fix shapes, and the oracle ran upstream's suite, which never contained the fork's regression tests). The bug re-emerged after the drop: one end user's cached `end_user_max_budget` was enforced against the next end user on a shared key. Re-applied at v1.105.0 adapted to the current code: `_copy_user_api_key_auth_for_cache` strips all end-user fields (incl. the new `end_user_tpd_limit`), and `update_valid_token_with_end_user_params` clears end-user fields when `end_user_id` changes (same-user turns keep the only-overwrite-when-set policy so custom-auth caps survive; `end_user_max_budget` stays owned by the fill-when-None in `_lookup_end_user_and_apply_budget`). Regression tests: `test_end_user_fields_cleared_before_caching`, `test_a_different_end_user_cannot_inherit_the_previous_users_budget`. |
+| `ab795fff94` | fix: apply symmetric logic from spend writing to preflight reservation checks | **dropped** (user decision, 2026-10-15): not re-applied. The v1.101.0 "upstream-closed" verdict was also wrong (upstream's reservation pipeline has no virtual-key end-user skip), but the policy it encoded — suppressing end-user budget enforcement for virtual-key requests — is a semantics change, not a bug fix. With `a58e1a4fa5` re-applied the cached values are per-end-user correct, so end-user budgets enforce with the right numbers; re-apply only if per-key-only budget scoping is wanted again. |
 | `7c2809bd57` | fix: bump dependencies to close vuln CVE-2026-48710 (+ zero-cost skip in centralized fetch) | **upstream-closed**: uv.lock part obsolete (tornado 6.5.8 / uvicorn 0.51.0). Code part obsolete: upstream's `get_end_user_object` is a pure fetch (never calls `_check_end_user_budget`, swallows exceptions), so the centralized second end-user lookup cannot raise `BudgetExceededError`; zero-cost is covered by the `common_checks` gate and the reservation pipeline honors `_should_skip_budget_checks`. Team-key suppression restored via `b9f52b3a57`. |
 | `187ccb5ba8` | fix: default thinking display to summarized | **upstream-closed (evolved)**: upstream's `_map_reasoning_effort` returns `AnthropicThinkingParam(type="adaptive", display="summarized")` unconditionally for adaptive models — always-on, vs the fork's opt-in `is_reasoning_auto_summary_enabled()` gate. Re-applying the fork's gate would regress upstream's always-on behavior. The fork's explicit-caller-display precedence edge is not carried; a caller can pass `thinking` directly (without `reasoning_effort`) to control display. |
 | `5a4ed8276c` | log: add spend debug logging | **dropped** (user decision — debug-only aid). |
@@ -86,12 +87,14 @@ curl -X POST http://localhost:4000/v1/responses \
 ```
 Covered by the full cost-calculator suite in `tests/unit/test_cost_calculator.py` (upstream tests, since the fork patch was dropped).
 
-### 5. Symmetric Budget Reservation Logic — `ab795fff94` (**upstream-closed**)
-Covered by `pytest tests/unit/proxy/test_budget_reservation.py` (71/71 on v1.101.0) and
-`tests/unit/proxy/auth/test_user_api_key_auth.py` (163/163).
+### 5. Symmetric Budget Reservation Logic — `ab795fff94` (**dropped**)
+Not re-applied (user decision, 2026-10-15); see the disposition table. End-user budgets remain
+enforced for virtual-key requests, now with per-end-user correct values from the `a58e1a4fa5` re-apply.
 
-### 6. End User Derived Fields Caching — `a58e1a4fa5` (**upstream-closed**)
-Covered by the auth suite; upstream's per-request principal projection keeps derived fields per request.
+### 6. End User Derived Fields Caching — `a58e1a4fa5` (**fork-maintained**)
+Unit: `pytest tests/unit/proxy/auth/test_custom_auth_end_user_budget.py tests/unit/proxy/auth/test_auth_checks_object_access_and_lookup.py -q`
+(regression tests `test_a_different_end_user_cannot_inherit_the_previous_users_budget` and
+`test_end_user_fields_cleared_before_caching`).
 
 ### 7. Vertex AI FunctionCall 'id' Field Fix — `bc9bd4063b` (**upstream-closed**)
 Covered by `pytest tests/unit/llms/vertex_ai/gemini/test_vertex_and_google_ai_studio_gemini.py`

@@ -3975,6 +3975,16 @@ def _copy_user_api_key_auth_for_cache(
     copied_key_obj.budget_throttle_pct = None
     copied_key_obj.parent_otel_span = None
     copied_key_obj.request_route = None
+    # End-user-derived fields depend on the per-request `user` body param, not
+    # on the key, so caching them against the hashed token leaks one end
+    # user's budget onto another's request when a key is shared.
+    copied_key_obj.end_user_id = None
+    copied_key_obj.end_user_tpm_limit = None
+    copied_key_obj.end_user_rpm_limit = None
+    copied_key_obj.end_user_tpd_limit = None
+    copied_key_obj.end_user_max_budget = None
+    copied_key_obj.end_user_model_max_budget = None
+    copied_key_obj.allowed_model_region = None
     return copied_key_obj
 
 
