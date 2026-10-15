@@ -4276,10 +4276,24 @@ async def get_key_object(
     return _response
 
 
+# End-user fields come from the request's `user`, not the key, so they must never outlive the request's end user.
+END_USER_DERIVED_FIELDS: Final = (
+    "end_user_tpm_limit",
+    "end_user_rpm_limit",
+    "end_user_tpd_limit",
+    "end_user_max_budget",
+    "end_user_model_max_budget",
+    "end_user_object_permission",
+    "allowed_model_region",
+)
+
+
 def copy_user_api_key_auth_for_cache(
     user_api_key_obj: UserAPIKeyAuth,
 ) -> UserAPIKeyAuth:
-    copied_key_obj: Final = user_api_key_obj.model_copy()
+    copied_key_obj: Final = user_api_key_obj.model_copy(
+        update={**dict.fromkeys(END_USER_DERIVED_FIELDS), "end_user_id": None}
+    )
     copied_key_obj.budget_reservation = None
     copied_key_obj.budget_throttle_pct = None
     copied_key_obj.parent_otel_span = None

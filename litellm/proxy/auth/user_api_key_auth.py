@@ -18,6 +18,7 @@ from typing import Final, NamedTuple, Protocol, Union, cast
 import fastapi
 from fastapi import HTTPException, Request, WebSocket, status
 from fastapi.security.api_key import APIKeyHeader
+from pydantic import TypeAdapter
 from starlette.exceptions import WebSocketException
 
 import litellm
@@ -41,6 +42,7 @@ from litellm.litellm_core_utils.dot_notation_indexing import get_nested_value
 from litellm.proxy._types import *
 from litellm.proxy.agent_endpoints.auth.agent_caller import agent_caller_from_headers
 from litellm.proxy.auth.auth_checks import (  # noqa: F401  # legacy module exports
+    END_USER_DERIVED_FIELDS,
     ExperimentalUIJWTToken,
     TeamNotFoundError,
     _cache_key_object,  # pyright: ignore[reportPrivateUsage,reportUnusedImport]  # backwards-compatible package export
@@ -1279,23 +1281,26 @@ async def user_api_key_auth_accepted_websocket_for_model(websocket: WebSocket, m
     return await user_api_key_auth_websocket_for_model(websocket, model, close_on_auth_error=False)
 
 
+_END_USER_PARAMS_ADAPTER: Final = TypeAdapter(dict[str, object])
+_END_USER_PARAMS_APPLIED_WHEN_SET: Final = (
+    "end_user_tpm_limit",
+    "end_user_rpm_limit",
+    "end_user_tpd_limit",
+    "allowed_model_region",
+    "end_user_model_max_budget",
+)
+
+
 def update_valid_token_with_end_user_params(valid_token: UserAPIKeyAuth, end_user_params: dict) -> UserAPIKeyAuth:
-    valid_token.end_user_id = end_user_params.get("end_user_id")
-    # Only overwrite token fields when the DB-derived value is not None.
-    # This prevents DB lookups (where the budget table has no value set)
-    # from silently clearing values that a custom auth function may have
-    # already set on the token.
-    if end_user_params.get("end_user_tpm_limit") is not None:
-        valid_token.end_user_tpm_limit = end_user_params["end_user_tpm_limit"]
-    if end_user_params.get("end_user_rpm_limit") is not None:
-        valid_token.end_user_rpm_limit = end_user_params["end_user_rpm_limit"]
-    if end_user_params.get("end_user_tpd_limit") is not None:
-        valid_token.end_user_tpd_limit = end_user_params["end_user_tpd_limit"]
-    if end_user_params.get("allowed_model_region") is not None:
-        valid_token.allowed_model_region = end_user_params["allowed_model_region"]
-    if end_user_params.get("end_user_model_max_budget") is not None:
-        valid_token.end_user_model_max_budget = end_user_params["end_user_model_max_budget"]
-    return valid_token
+    typed_params: Final = _END_USER_PARAMS_ADAPTER.validate_python(end_user_params)
+    new_end_user_id: Final = typed_params.get("end_user_id")
+    # A different end user on the same key starts from cleared fields. Same-user turns only overwrite fields the
+    # params set, so custom-auth caps survive a DB row with no limits.
+    cleared: Final = dict.fromkeys(END_USER_DERIVED_FIELDS) if valid_token.end_user_id != new_end_user_id else {}
+    applied: Final = {
+        field: typed_params[field] for field in _END_USER_PARAMS_APPLIED_WHEN_SET if typed_params.get(field) is not None
+    }
+    return valid_token.model_copy(update={**cleared, "end_user_id": new_end_user_id, **applied})
 
 
 # Reusable coordinator for global spend to prevent cache stampede
