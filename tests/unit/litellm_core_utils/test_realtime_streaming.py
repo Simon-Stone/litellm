@@ -902,10 +902,14 @@ async def test_transcription_session_captures_usage_and_skips_response_create():
 
 
 @pytest.mark.asyncio
-async def test_non_transcription_completed_event_still_triggers_response_create():
+async def test_non_transcription_completed_event_does_not_trigger_response_create_without_guardrails():
     """
     Regression guard: a normal (non-transcription) session with no guardrails must
-    keep triggering response.create on a completed transcription event.
+    NOT trigger response.create on a completed transcription event. Response
+    triggering belongs to the provider's turn detection or the client (which may
+    drive response.create itself, e.g. Open WebUI's realtime bridge); injecting one
+    here collides with the client's own create (conversation_already_has_active_response)
+    or duplicates the provider's VAD auto-response.
     """
     client_ws = MagicMock()
     client_ws.send_text = AsyncMock()
@@ -931,7 +935,12 @@ async def test_non_transcription_completed_event_still_triggers_response_create(
 
     assert streaming._is_transcription_session is False
     sent_to_backend = [json.loads(c.args[0]) for c in backend_ws.send.call_args_list if c.args]
-    assert any(e.get("type") == "response.create" for e in sent_to_backend)
+    assert all(e.get("type") != "response.create" for e in sent_to_backend), (
+        f"no-guardrail sessions must not inject response.create, got: {sent_to_backend}"
+    )
+
+    # The transcript itself is still forwarded to the client.
+    client_ws.send_text.assert_any_call(completed.decode())
 
 
 def test_client_session_update_marks_transcription_session():

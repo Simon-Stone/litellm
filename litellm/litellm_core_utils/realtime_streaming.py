@@ -806,6 +806,20 @@ class RealTimeStreaming:
 
         return self._has_realtime_guardrails_for_event_hooks([GuardrailEventHooks.realtime_input_transcription])
 
+    def _proxy_owns_response_triggering(self) -> bool:
+        """Return True when the proxy disabled VAD auto-response and must trigger responses itself.
+
+        The compensating ``response.create`` after a completed transcription exists for
+        the guardrail flow, where the proxy forces ``turn_detection.create_response``
+        to false and therefore has to start each response after checking the transcript.
+        Without guardrails, response triggering belongs to the provider's turn
+        detection or the client (which may drive ``response.create`` itself, e.g.
+        Open WebUI's realtime bridge); injecting one here collides with the client's
+        own create (``conversation_already_has_active_response``) or duplicates the
+        provider's VAD auto-response.
+        """
+        return self._has_audio_transcription_guardrails()
+
     async def run_realtime_guardrails(
         self,
         transcript: str,
@@ -1017,7 +1031,13 @@ class RealTimeStreaming:
                     cast(str, transcript),
                     item_id=cast(str | None, event.get("item_id")),
                 )
-                if not blocked and not self._is_transcription_session:
+                # Only trigger the response ourselves when the proxy disabled VAD
+                # auto-response (guardrail gating). Otherwise the client — or the
+                # provider's own turn detection — owns response triggering, and an
+                # injected response.create here collides with the client's own
+                # (conversation_already_has_active_response) or duplicates the
+                # provider's VAD auto-response.
+                if not blocked and not self._is_transcription_session and self._proxy_owns_response_triggering():
                     await self._send_to_backend(json.dumps({"type": "response.create"}))
                 continue
             ## LOGGING
@@ -1068,7 +1088,13 @@ class RealTimeStreaming:
                 transcript,
                 item_id=event_obj.get("item_id"),
             )
-            if not blocked:
+            # Only trigger the response ourselves when the proxy disabled VAD
+            # auto-response (guardrail gating). Otherwise the client — or the
+            # provider's own turn detection — owns response triggering, and an
+            # injected response.create here collides with the client's own
+            # (conversation_already_has_active_response) or duplicates the
+            # provider's VAD auto-response.
+            if not blocked and self._proxy_owns_response_triggering():
                 await self._send_to_backend(json.dumps({"type": "response.create"}))
             return True
         return False
