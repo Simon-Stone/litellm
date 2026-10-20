@@ -33,6 +33,7 @@ from litellm.proxy.auth.auth_utils import (
     get_project_model_tpm_limit,
     get_request_route_template,
     is_request_body_safe,
+    is_virtual_key_request,
 )
 from litellm.router import Router
 from litellm.types.utils import oauth_token_exchange_litellm_params
@@ -4780,3 +4781,24 @@ def test_get_end_user_id_from_request_body_backwards_compatibility():
     )
     for request_body, expected_end_user_id in cases:
         assert get_end_user_id_from_request_body(request_body) == expected_end_user_id
+
+
+class TestIsVirtualKeyRequest:
+    """is_virtual_key_request decides which credential scopes carry the end
+    user: only direct master-key requests attribute end-user spend and enforce
+    the end-user budget."""
+
+    def test_none_api_key_is_not_a_virtual_key(self):
+        assert is_virtual_key_request(None) is False
+
+    def test_master_key_alias_is_not_a_virtual_key(self):
+        assert is_virtual_key_request("litellm_proxy_master_key") is False
+
+    def test_master_key_hash_is_not_a_virtual_key(self, monkeypatch):
+        monkeypatch.setattr(
+            "litellm.proxy.proxy_server.litellm_master_key_hash", "master-hash"
+        )
+        assert is_virtual_key_request("master-hash") is False
+
+    def test_hashed_virtual_key_is_a_virtual_key(self):
+        assert is_virtual_key_request("hashed-token") is True

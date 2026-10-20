@@ -11,6 +11,7 @@ from litellm.caching import DualCache
 from litellm.models.budget import LiteLLM_BudgetTable
 from litellm.proxy import proxy_server
 from litellm.proxy._types import (
+    LiteLLM_EndUserTable,
     LiteLLM_OrganizationTable,
     LiteLLM_ProjectTableCachedObj,
     LiteLLM_TeamMembership,
@@ -426,3 +427,61 @@ async def test_reservation_holds_cost_against_cached_org_and_project_budgets(spe
 )
 def test_budget_window_start_reads_json_encoded_windows(window: str, expected: datetime | None) -> None:
     assert get_budget_window_start(window) == expected
+
+
+async def test_end_user_counter_skipped_for_a_virtual_key() -> None:
+    """Virtual/team keys get no end-user reservation: post-call spend tracking
+    drops end-user attribution for them, so a pre-call end-user budget would
+    block requests the spend side never charges."""
+    from litellm.proxy.spend_tracking.budget_reservation import _get_end_user_budget_counter
+
+    end_user_row: Final = LiteLLM_EndUserTable(
+        user_id="customer-1",
+        blocked=False,
+        spend=100.0,
+        litellm_budget_table=LiteLLM_BudgetTable(max_budget=2.0),
+    )
+
+    counter: Final = await _get_end_user_budget_counter(
+        valid_token=UserAPIKeyAuth(
+            api_key="sk-team-key",
+            token="hashed-token",
+            team_id="team-1",
+            end_user_id="customer-1",
+            end_user_max_budget=2.0,
+        ),
+        end_user_id="customer-1",
+        end_user_object=end_user_row,
+    )
+
+    assert counter is None
+
+
+@pytest.mark.asyncio
+async def test_end_user_counter_reserved_for_the_master_key() -> None:
+    """Direct master-key requests keep the end-user reservation, symmetric with
+    the spend side attributing end-user spend only on that path."""
+    from litellm.proxy.spend_tracking.budget_reservation import _get_end_user_budget_counter
+
+    end_user_row: Final = LiteLLM_EndUserTable(
+        user_id="customer-1",
+        blocked=False,
+        spend=1.0,
+        litellm_budget_table=LiteLLM_BudgetTable(max_budget=2.0),
+    )
+
+    counter: Final = await _get_end_user_budget_counter(
+        valid_token=UserAPIKeyAuth(
+            api_key="litellm_proxy_master_key",
+            token="hashed-token",
+            end_user_id="customer-1",
+            end_user_max_budget=2.0,
+        ),
+        end_user_id="customer-1",
+        end_user_object=end_user_row,
+    )
+
+    assert counter is not None
+    assert counter.counter_key == "spend:end_user:customer-1"
+    assert counter.max_budget == 2.0
+    assert counter.fallback_spend == 1.0

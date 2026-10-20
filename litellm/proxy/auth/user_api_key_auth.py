@@ -110,6 +110,7 @@ from litellm.proxy.auth.auth_utils import (
     get_request_route,
     get_request_route_template,
     is_invalid_virtual_key_error,
+    is_virtual_key_request,
     iter_request_fallback_targets,
     log_model_access_denial,
     normalize_request_route,
@@ -4562,8 +4563,13 @@ async def _run_post_custom_auth_checks(
         # common_checks() enforces the end-user budget, but the centralized
         # gate skips it for custom-auth deployments unless
         # custom_auth_run_common_checks is set. Enforce it here on that path
-        # so an over-budget end user can't keep making requests.
-        if end_user_object is not None and not general_settings.get("custom_auth_run_common_checks", False):
+        # so an over-budget end user can't keep making requests. Virtual/team keys skip it, symmetric with the
+        # spend writers dropping end-user attribution for them.
+        if (
+            end_user_object is not None
+            and not general_settings.get("custom_auth_run_common_checks", False)
+            and not is_virtual_key_request(valid_token.api_key)
+        ):
             await check_end_user_budget(end_user_obj=end_user_object, route=route)
 
     # 2. Check token expiry

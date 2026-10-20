@@ -134,6 +134,51 @@ async def test_custom_auth_enforces_end_user_budget_when_common_checks_skipped()
 
 
 @pytest.mark.asyncio
+async def test_custom_auth_skips_end_user_budget_for_a_virtual_key():
+    # The same over-budget end user on a virtual/team key must pass: end-user
+    # spend is not attributed for virtual keys, so enforcing the end-user
+    # budget there would block requests the spend side never charges.
+    valid_token = UserAPIKeyAuth(
+        api_key="sk-team-key",
+        token="test_token",
+        team_id="team-1",
+        end_user_id="customer-1",
+    )
+    over_budget_end_user = LiteLLM_EndUserTable(
+        user_id="customer-1",
+        blocked=False,
+        spend=0.0,
+        litellm_budget_table=LiteLLM_BudgetTable(max_budget=1.0),
+    )
+
+    async def mock_get_current_spend(
+        counter_key, fallback_spend, max_budget=None, **kwargs
+    ):
+        if counter_key == "spend:end_user:customer-1":
+            return 5.0
+        return fallback_spend
+
+    with (
+        patch(
+            "litellm.proxy.auth.user_api_key_auth.get_end_user_object",
+            new_callable=AsyncMock,
+            return_value=over_budget_end_user,
+        ),
+        patch("litellm.proxy.proxy_server.get_current_spend", mock_get_current_spend),
+        patch("litellm.proxy.proxy_server.general_settings", {}),
+    ):
+        result = await _run_post_custom_auth_checks(
+            valid_token=valid_token,
+            request=None,
+            request_data={"model": "gpt-4"},
+            route="/v1/chat/completions",
+            parent_otel_span=None,
+        )
+
+    assert result.end_user_id == "customer-1"
+
+
+@pytest.mark.asyncio
 async def test_custom_auth_defers_end_user_budget_to_common_checks_when_enabled():
     # With custom_auth_run_common_checks set, the wrapper's common_checks()
     # enforces the end-user budget, so the helper must not double-enforce it.
