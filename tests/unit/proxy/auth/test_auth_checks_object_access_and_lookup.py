@@ -4585,6 +4585,75 @@ async def test_end_user_fields_cleared_before_caching():
     assert cached.token == valid_token.token
 
 
+def _over_budget_end_user() -> LiteLLM_EndUserTable:
+    return LiteLLM_EndUserTable(
+        user_id="customer-1",
+        blocked=False,
+        spend=100.0,
+        litellm_budget_table=LiteLLM_BudgetTable(max_budget=2.0),
+    )
+
+
+async def _run_common_checks_with_end_user(
+    valid_token: UserAPIKeyAuth,
+    end_user_object: LiteLLM_EndUserTable,
+) -> bool:
+    from fastapi import Request
+
+    from litellm.proxy.auth.auth_checks import common_checks
+
+    with _patched_spend(100.0):
+        return await common_checks(
+            request_body={"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}]},
+            team_object=None,
+            user_object=None,
+            end_user_object=end_user_object,
+            global_proxy_spend=None,
+            general_settings={},
+            route="/chat/completions",
+            llm_router=None,
+            proxy_logging_obj=_budget_logging_obj(),
+            valid_token=valid_token,
+            request=MagicMock(spec=Request),
+        )
+
+
+@pytest.mark.asyncio
+async def test_common_checks_skip_end_user_budget_for_a_virtual_key():
+    """A virtual/team key carrying an over-budget end user must not block the
+    request: end-user spend is not attributed for virtual keys, so the end-user
+    budget must not fire either. The key and team budgets are the scopes that
+    matter."""
+    valid_token = UserAPIKeyAuth(
+        api_key="sk-team-key",
+        token="hashed-token",
+        team_id="team-1",
+        models=["gpt-4o"],
+    )
+
+    assert await _run_common_checks_with_end_user(valid_token, _over_budget_end_user()) is True
+
+
+@pytest.mark.asyncio
+async def test_common_checks_enforce_end_user_budget_for_the_master_key():
+    """Direct master-key requests keep end-user budget enforcement: the spend
+    side attributes end-user spend only on that path, so the budget check stays
+    symmetric with it."""
+    import litellm
+
+    valid_token = UserAPIKeyAuth(
+        api_key="litellm_proxy_master_key",
+        token="hashed-token",
+        models=["gpt-4o"],
+    )
+
+    with pytest.raises(litellm.BudgetExceededError) as exc_info:
+        await _run_common_checks_with_end_user(valid_token, _over_budget_end_user())
+
+    assert exc_info.value.max_budget == 2.0
+    assert exc_info.value.current_cost == 100.0
+
+
 @pytest.mark.asyncio
 async def test_budget_exceeded_throttle_no_configured_limits(monkeypatch):
     monkeypatch.setattr(litellm, "budget_exceeded_throttle_percentage", 0.1)

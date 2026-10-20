@@ -4656,10 +4656,13 @@ async def test_centralized_checks_enforce_token_end_user_budget_against_row_spen
     row carries no budget, which keeps that row out of the restricted-id registry. Auth must still
     load it, because the reservation counter cold-starts from the spend on the loaded row; skipping
     the load admits a customer who is already double their budget.
+
+    End-user budget enforcement only applies to direct master-key requests; this test runs the
+    token through the master-key alias so the enforcement path stays covered.
     """
     mock_prisma = _unrestricted_end_user_prisma(spend=100.0)
     token = UserAPIKeyAuth(
-        api_key="sk-test",
+        api_key="litellm_proxy_master_key",
         token="hashed-token",
         user_id="u1",
         end_user_id="customer-1",
@@ -4690,6 +4693,47 @@ async def test_centralized_checks_enforce_token_end_user_budget_against_row_spen
 
     assert exc_info.value.max_budget == 50.0
     assert exc_info.value.current_cost == pytest.approx(100.6)
+
+
+@pytest.mark.asyncio
+async def test_centralized_checks_skip_end_user_budget_for_a_virtual_key():
+    """A virtual/team key carrying an end user must not have the end-user budget
+    enforced: post-call spend tracking already drops end-user attribution for
+    virtual keys, so enforcing the budget would block requests the spend side
+    never charges. The key and team budgets remain the authoritative scopes."""
+    mock_prisma = _unrestricted_end_user_prisma(spend=100.0)
+    token = UserAPIKeyAuth(
+        api_key="sk-test",
+        token="hashed-token",
+        user_id="u1",
+        end_user_id="customer-1",
+        end_user_max_budget=50.0,
+    )
+
+    with _custom_auth_end_user_world(mock_prisma):
+        with (
+            patch(
+                "litellm.proxy.auth.user_api_key_auth.common_checks",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "litellm.proxy.spend_tracking.budget_reservation.estimate_request_max_cost",
+                return_value=0.6,
+            ),
+        ):
+            await _run_centralized_common_checks(
+                user_api_key_auth_obj=token,
+                request=_chat_request(),
+                request_data={
+                    "model": "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+                route="/chat/completions",
+            )
+
+    assert token.budget_reservation is None or all(
+        entry["entity_type"] != "EndUser" for entry in token.budget_reservation["entries"]
+    )
 
 
 @pytest.mark.asyncio
@@ -4911,12 +4955,16 @@ async def test_centralized_common_checks_propagates_end_user_budget_error():
 async def test_centralized_common_checks_reserves_request_end_user_budget():
     """Regression: reservation runs before user_api_key_auth() copies the
     request end-user onto the token, so centralized checks must pass the
-    locally extracted end_user_id/end_user_object into reservation."""
+    locally extracted end_user_id/end_user_object into reservation.
+
+    End-user budget reservation only applies to direct master-key requests
+    (virtual/team keys skip it, symmetric with post-call spend attribution),
+    so the token runs through the master-key alias here."""
     import litellm.proxy.proxy_server as _proxy_server_mod
     from fastapi import Request
     from starlette.datastructures import URL
 
-    token = UserAPIKeyAuth(api_key="sk-test", user_id="u")
+    token = UserAPIKeyAuth(api_key="litellm_proxy_master_key", user_id="u")
     request = Request(scope={"type": "http", "headers": []})
     request._url = URL(url="/chat/completions")
     request_data = {
@@ -4978,6 +5026,70 @@ async def test_centralized_common_checks_reserves_request_end_user_budget():
         }
     ]
     assert counter_cache.in_memory_cache.get_cache(key="spend:end_user:alice") == pytest.approx(0.6)
+
+
+@pytest.mark.asyncio
+async def test_centralized_common_checks_reserve_no_end_user_budget_for_a_virtual_key():
+    """The virtual-key counterpart: the same request end user gets no EndUser
+    reservation entry and no spend counter, because post-call spend tracking
+    drops end-user attribution for virtual/team keys."""
+    import litellm.proxy.proxy_server as _proxy_server_mod
+    from fastapi import Request
+    from starlette.datastructures import URL
+
+    token = UserAPIKeyAuth(api_key="sk-test", user_id="u")
+    request = Request(scope={"type": "http", "headers": []})
+    request._url = URL(url="/chat/completions")
+    request_data = {
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": "hello"}],
+        "user": "alice",
+    }
+    end_user_object = LiteLLM_EndUserTable(
+        user_id="alice",
+        blocked=False,
+        spend=0.0,
+        litellm_budget_table=LiteLLM_BudgetTable(max_budget=1.0),
+    )
+
+    attrs = _proxy_attrs_for_centralized_checks(user_custom_auth=None)
+    counter_cache = DualCache()
+    attrs["spend_counter_cache"] = counter_cache
+    originals = {a: getattr(_proxy_server_mod, a, None) for a in attrs}
+    try:
+        for k, v in attrs.items():
+            setattr(_proxy_server_mod, k, v)
+        with (
+            patch(
+                "litellm.proxy.auth.user_api_key_auth.get_end_user_object",
+                new_callable=AsyncMock,
+                return_value=end_user_object,
+            ),
+            patch(
+                "litellm.proxy.auth.user_api_key_auth.common_checks",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "litellm.proxy.spend_tracking.budget_reservation.estimate_request_max_cost",
+                return_value=0.6,
+            ),
+        ):
+            await _run_centralized_common_checks(
+                user_api_key_auth_obj=token,
+                request=request,
+                request_data=request_data,
+                route="/chat/completions",
+            )
+
+    finally:
+        for k, v in originals.items():
+            setattr(_proxy_server_mod, k, v)
+
+    assert token.end_user_id is None
+    assert token.budget_reservation is None or all(
+        entry["entity_type"] != "EndUser" for entry in token.budget_reservation["entries"]
+    )
+    assert counter_cache.in_memory_cache.get_cache(key="spend:end_user:alice") is None
 
 
 @pytest.mark.asyncio

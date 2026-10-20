@@ -23,7 +23,7 @@ from litellm.proxy._types import (
     LiteLLM_UserTable,
     UserAPIKeyAuth,
 )
-from litellm.proxy.auth.auth_utils import get_model_from_request
+from litellm.proxy.auth.auth_utils import get_model_from_request, is_virtual_key_request
 from litellm.proxy.auth.budget_throttle import should_throttle_budget_exceeded
 from litellm.proxy.auth.route_checks import RouteChecks
 from litellm.proxy.common_utils.user_api_key_cache import (
@@ -613,6 +613,12 @@ async def _get_end_user_budget_counter(
     end_user_id: str | None,
     end_user_object: object,
 ) -> _BudgetCounter | None:
+    # Pre-call counterpart of the spend writers' virtual-key skip: when a
+    # virtual/team key is used, end-user spend is not attributed post-call, so
+    # the pre-call reservation must not enforce the end-user budget either.
+    # The key and team budgets are the authoritative scopes.
+    if is_virtual_key_request(valid_token.api_key):
+        return None
     end_user_id = end_user_id or valid_token.end_user_id
     if end_user_id is None:
         return None

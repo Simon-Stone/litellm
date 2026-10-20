@@ -148,7 +148,7 @@ from .auth_checks_organization import (
     add_team_org_context_to_request_body,
     organization_role_based_access_check,
 )
-from .auth_utils import get_model_from_request, get_request_route_template
+from .auth_utils import get_model_from_request, get_request_route_template, is_virtual_key_request
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Span as _Span
@@ -1229,7 +1229,11 @@ async def common_checks(
                     team_membership_loaded=team_membership_loaded,
                 ),
                 _check_end_user_budget(end_user_obj=end_user_object, route=route)
-                if end_user_object is not None and end_user_object.litellm_budget_table is not None
+                if (
+                    end_user_object is not None
+                    and end_user_object.litellm_budget_table is not None
+                    and not is_virtual_key_request(valid_token.api_key if valid_token is not None else None)
+                )
                 else None,
             )
             if coro is not None

@@ -17,6 +17,7 @@ from litellm.constants import (
     BATCH_ENQUEUED_TOKEN_LIMIT_METADATA_KEY,
     EMPTY_MAPPING,
     INVALID_VIRTUAL_KEY_ERROR_MARKER,
+    LITELLM_PROXY_MASTER_KEY_ALIAS,
     MINIMUM_CUSTOM_KEY_LENGTH,
     STANDARD_CUSTOMER_ID_HEADERS,
 )
@@ -73,6 +74,24 @@ def mark_invalid_virtual_key_error(exception: ProxyException, is_invalid_virtual
     )
     setattr(marked_exception, INVALID_VIRTUAL_KEY_ERROR_MARKER, True)
     return marked_exception
+
+
+def is_virtual_key_request(api_key: str | None) -> bool:
+    """True when the authenticated caller is a virtual/team key rather than the master key.
+
+    Mirrors the predicate the post-call spend writers use to drop end-user
+    attribution (db_spend_update_writer.update_database and
+    proxy_track_cost_callback): end-user budget enforcement and spend tracking
+    only apply when the master key is used directly. When a virtual/team key
+    carries ``user=<end_user_id>``, the key and team budgets are the
+    authoritative scopes.
+    """
+    from litellm.proxy.proxy_server import litellm_master_key_hash
+
+    return api_key is not None and api_key not in (
+        litellm_master_key_hash,
+        LITELLM_PROXY_MASTER_KEY_ALIAS,
+    )
 
 
 def _get_request_ip_address(request: Request, use_x_forwarded_for: bool | None = False) -> str | None:
