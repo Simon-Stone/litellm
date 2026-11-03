@@ -776,6 +776,30 @@ def test_gemini_realtime_user_text_transformation():
     assert client_content["turnComplete"] is True
 
 
+@pytest.mark.parametrize("role", ["system", "assistant"])
+def test_gemini_realtime_non_user_item_does_not_complete_turn(role):
+    config = GeminiRealtimeConfig()
+    item_event = {
+        "type": "conversation.item.create",
+        "item": {
+            "type": "message",
+            "role": role,
+            "content": [{"type": "input_text", "text": "Chat context snapshot"}],
+        },
+    }
+
+    messages = config.transform_realtime_request(
+        json.dumps(item_event),
+        "gemini-2.5-flash",
+        session_configuration_request="existing",
+    )
+
+    assert len(messages) == 1
+    client_content = json.loads(messages[0])["clientContent"]
+    assert client_content["turns"][0]["parts"][0]["text"] == "Chat context snapshot"
+    assert client_content["turnComplete"] is False
+
+
 def test_return_new_content_delta_events_without_session_config_does_not_error():
     config = GeminiRealtimeConfig()
 

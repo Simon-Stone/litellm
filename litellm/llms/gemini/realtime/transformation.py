@@ -7,6 +7,7 @@ from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, cast
 
+from pydantic import TypeAdapter
 from typing_extensions import ReadOnly, Required, TypedDict
 
 import litellm
@@ -138,6 +139,9 @@ PCM16_INPUT_AUDIO_BYTES_PER_SECOND: Final = 48000
 def _base64_decoded_byte_count(data: str) -> int:
     padding: Final = 2 if data.endswith("==") else 1 if data.endswith("=") else 0
     return max(len(data) * 3 // 4 - padding, 0)
+
+
+_REALTIME_ITEM_ADAPTER: Final = TypeAdapter(dict[str, object])
 
 
 class GeminiRealtimeConfig(BaseRealtimeConfig):
@@ -578,10 +582,11 @@ class GeminiRealtimeConfig(BaseRealtimeConfig):
         if not text:
             return []
 
+        is_user_turn: Final = _REALTIME_ITEM_ADAPTER.validate_python(item).get("role", "user") == "user"
         client_content_message: Final = {
             "clientContent": {
                 "turns": [{"role": "user", "parts": [{"text": text}]}],
-                "turnComplete": True,
+                "turnComplete": is_user_turn,
             }
         }
 
