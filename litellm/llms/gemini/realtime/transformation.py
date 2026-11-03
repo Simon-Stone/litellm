@@ -581,7 +581,7 @@ class GeminiRealtimeConfig(BaseRealtimeConfig):
         client_content_message: Final = {
             "clientContent": {
                 "turns": [{"role": "user", "parts": [{"text": text}]}],
-                "turnComplete": True,
+                "turnComplete": item.get("role", "user") == "user",
             }
         }
 
