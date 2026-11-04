@@ -129,6 +129,8 @@ USER root
 # https://github.com/BerriAI/litellm/issues/33518
 RUN echo "https://packages.wolfi.dev/os" >> /etc/apk/repositories
 
+RUN apk upgrade --no-cache
+
 # node (without npm) is required by the prisma CLI at runtime
 # libssl3/libcrypto3 provide the OpenSSL 3 libs the pgbouncer binary links against
 RUN apk add --no-cache bash openssl libssl3 libcrypto3 tzdata nodejs python-3.13 libsndfile libevent ca-certificates
