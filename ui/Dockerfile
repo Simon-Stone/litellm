@@ -32,6 +32,8 @@ RUN rm -f /etc/nginx/conf.d/default.conf
 # Static export → web root.
 COPY --from=builder /app/out /usr/share/nginx/html
 
+RUN apk add --no-cache ca-certificates
+
 # Routing rules — see ui/nginx.conf for the full description.
 COPY ui/nginx.conf /etc/nginx/nginx.conf
 

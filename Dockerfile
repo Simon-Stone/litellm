@@ -131,7 +131,7 @@ RUN echo "https://packages.wolfi.dev/os" >> /etc/apk/repositories
 
 # node (without npm) is required by the prisma CLI at runtime
 # libssl3/libcrypto3 provide the OpenSSL 3 libs the pgbouncer binary links against
-RUN apk add --no-cache bash openssl libssl3 libcrypto3 tzdata nodejs python-3.13 libsndfile libevent
+RUN apk add --no-cache bash openssl libssl3 libcrypto3 tzdata nodejs python-3.13 libsndfile libevent ca-certificates
 COPY --from=pgbouncer-builder /usr/local/bin/pgbouncer /usr/local/bin/pgbouncer
 
 WORKDIR /app
