@@ -129,9 +129,10 @@ USER root
 # https://github.com/BerriAI/litellm/issues/33518
 RUN echo "https://packages.wolfi.dev/os" >> /etc/apk/repositories
 
+# wolfi-base pins ca-certificates-bundle in /etc/apk/world, so only an explicit constraint upgrades it (CVE-2026-91403)
 # node (without npm) is required by the prisma CLI at runtime
 # libssl3/libcrypto3 provide the OpenSSL 3 libs the pgbouncer binary links against
-RUN apk add --no-cache bash openssl libssl3 libcrypto3 tzdata nodejs python-3.13 libsndfile libevent
+RUN apk add --no-cache bash openssl libssl3 libcrypto3 tzdata nodejs python-3.13 libsndfile libevent 'ca-certificates-bundle>=20260909-r3'
 COPY --from=pgbouncer-builder /usr/local/bin/pgbouncer /usr/local/bin/pgbouncer
 
 WORKDIR /app
