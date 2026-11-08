@@ -1997,6 +1997,26 @@ async def test_remote_input_images_reach_openai_unfetched(
     assert async_only_image_fetch.fetched == []
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("api", "request_kwargs"), _image_requests(_PNG_DATA_URL), ids=_PREDICATE_REQUEST_IDS)
+async def test_images_reach_hosted_vllm_as_its_images_field(
+    api: str, request_kwargs: Mapping[str, object], respx_mock: respx.MockRouter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(litellm, "drop_params", False)
+    monkeypatch.delenv("HOSTED_VLLM_API_BASE", raising=False)
+    monkeypatch.delenv("HOSTED_VLLM_API_KEY", raising=False)
+    route: Final = respx_mock.post("http://vllm.local:8000/v1/systemone").respond(json=_VLLM_RESPONSE)
+
+    await getattr(litellm, f"a{api}")(model="hosted_vllm/clef", api_base="http://vllm.local:8000", **request_kwargs)
+
+    assert json.loads(route.calls[0].request.content) == {
+        "model": "clef",
+        "state": _SCREEN_TEXT,
+        "questions": {"is_defect": {"type": "noul", "instructions": "Is this a defect?"}},
+        "images": [_PNG_DATA_URL],
+    }
+
+
 _IMAGE_REFUSALS: Final[tuple[tuple[str, Mapping[str, object], str], ...]] = (
     ("decisions", _image_requests(_PNG_DATA_URL)[0][1], "input_image"),
     ("systemone", _image_requests(_PNG_DATA_URL)[1][1], "images"),
